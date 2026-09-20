@@ -46,3 +46,5 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+iitj_data/pointcloud.laz
