@@ -48,3 +48,4 @@ __pycache__/
 Thumbs.db
 
 iitj_data/pointcloud.laz
+models/iitj_campus.csv
