@@ -13,8 +13,8 @@ from handarm.geometry.alignment import auto_align_up_axis
 class ExploreEnvironment:
     """Manages point cloud environment and first-person player navigation."""
 
-    def __init__(self, csv_path: str, downsample_step: int = 10,
-                 point_thickness: float = 0.009,
+    def __init__(self, csv_path: str, downsample_step: int = 1,
+                 point_thickness: float = 1.5,
                  reset_cooldown_duration: float = 2.0) -> None:
         """Load point cloud, create mesh entity, and set up player controller."""
         # Load and process point cloud
@@ -33,9 +33,10 @@ class ExploreEnvironment:
         vertices = [Vec3(x, y, z) for x, y, z in zip(df["x"], df["y"], df["z"])]
         point_colors = [(r / 255.0, g / 255.0, b / 255.0, 1.0)
                         for r, g, b in zip(df["r"], df["g"], df["b"])]
-        mesh = Mesh(vertices=vertices, colors=point_colors,
-                    mode='point', thickness=point_thickness)
-        Entity(model=mesh)
+        mesh = Mesh(vertices=vertices, colors=point_colors, mode='point')
+        self.point_entity = Entity(model=mesh)
+        self.point_entity.set_render_mode_thickness(1)
+        self.point_entity.set_render_mode_perspective(False)
 
         # Player controller
         self.player = FirstPersonController()
@@ -123,10 +124,10 @@ class ExploreEnvironment:
                     self.player.position -= self.player.forward * 2.0 * time.dt
                 elif left_state['gesture'] == 'Forward':
                     self.player.position += self.player.forward * 2.0 * time.dt
-            if self.player.y < ground_y + 0.2:
-                self.player.y = ground_y + 0.2
+            if self.player.y < ground_y + 1.8:
+                self.player.y = ground_y + 1.8
         else:
-            self.player.y = lerp(self.player.y, ground_y + 0.2, time.dt * 10)
+            self.player.y = lerp(self.player.y, ground_y + 1.8, time.dt * 10)
             if not self.spawn_initialized:
                 self.spawn_position = Vec3(self.player.position)
                 self.spawn_rotation = Vec3(

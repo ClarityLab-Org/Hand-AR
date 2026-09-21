@@ -108,25 +108,25 @@ def main() -> None:
     Text(
         text="<yellow>HAND CONTROLS\n\n"
              "<orange>RIGHT HAND (ALWAYS ACTIVE)\n"
-             "<white>🖐 Open Palm   : Enable View Control\n"
-             "<white>✊ Fist        : Freeze View\n"
-             "<white>← Move Left   : Look Left\n"
-             "<white>→ Move Right  : Look Right\n"
-             "<white>↑ Move Up     : Look Up\n"
-             "<white>↓ Move Down   : Look Down\n\n"
+             "<white>[Open Palm]  : Enable View Control\n"
+             "<white>[Fist]       : Freeze View\n"
+             "<white><- Move Left : Look Left\n"
+             "<white>-> Move Right: Look Right\n"
+             "<white>^  Move Up   : Look Up\n"
+             "<white>v  Move Down : Look Down\n\n"
              "<cyan>LEFT HAND (WALK MODE)\n"
-             "<white>✌ Peace       : Toggle Flight Mode\n"
-             "<white>🖐 move palm up   : Move Forward\n"
-             "<white>🖐 move palm Down   : Move Backward\n"
-             "<white>✊ Fist        : Stop\n\n"
+             "<white>[Peace]      : Toggle Flight Mode\n"
+             "<white>Move Palm Up : Move Forward\n"
+             "<white>Move Palm Dn : Move Backward\n"
+             "<white>[Fist]       : Stop\n\n"
              "<lime>LEFT HAND (FLIGHT MODE)\n"
-             "<white> thumbs up     : position Reset\n"
-             "<white>✌ Peace       : Toggle Walk Mode\n"
-             "<white>☝  Index Up    : Fly Up\n"
-             "<white>👇  Index Down  : Fly Down\n"
-             "<white>🖐 move Palm up  : Fly Forward\n"
-             "<white>🖐 move Palm Down   : Fly Backward\n"
-             "<white>✊ Fist        : ...",
+             "<white>[Thumbs Up]  : Position Reset\n"
+             "<white>[Peace]      : Toggle Walk Mode\n"
+             "<white>[Index Up]   : Fly Up\n"
+             "<white>[Index Down] : Fly Down\n"
+             "<white>Move Palm Up : Fly Forward\n"
+             "<white>Move Palm Dn : Fly Backward\n"
+             "<white>[Fist]       : Stop",
         position=window.top_left + Vec2(0.02, -0.02),
         origin=(-0.5, 0.5), scale=0.8, background=True,
     )
@@ -141,8 +141,8 @@ def main() -> None:
     print("Loading Point Cloud Environment...")
     env = ExploreEnvironment(
         csv_path,
-        downsample_step=6,
-        point_thickness=4,
+        downsample_step=1,
+        point_thickness=1.5,
         reset_cooldown_duration=0.0,
     )
 

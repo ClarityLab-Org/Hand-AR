@@ -90,13 +90,13 @@ def main() -> None:
 
         if model_path.lower().endswith(".csv"):
             df = pd.read_csv(model_path)
-            df = df.iloc[::10]
             df = auto_align_up_axis(df)
             vertices = [Vec3(x, y, z) for x, y, z in zip(df["x"], df["y"], df["z"])]
             point_colors = [(r / 255.0, g / 255.0, b / 255.0, 1.0)
                             for r, g, b in zip(df["r"], df["g"], df["b"])]
-            car.model = Mesh(vertices=vertices, colors=point_colors,
-                             mode='point', thickness=0.009)
+            car.model = Mesh(vertices=vertices, colors=point_colors, mode='point')
+            car.set_render_mode_thickness(1)
+            car.set_render_mode_perspective(False)
         else:
             panda_path = Filename.from_os_specific(model_path)
             loaded = base.loader.load_model(panda_path)
@@ -206,8 +206,8 @@ def main() -> None:
         print("--- SETUP: EXPLORE MODE ---")
         env = ExploreEnvironment(
             model_path,
-            downsample_step=10,
-            point_thickness=0.009,
+            downsample_step=1,
+            point_thickness=1.5,
             reset_cooldown_duration=2.0,
         )
         player = env.player
@@ -231,35 +231,35 @@ def main() -> None:
                             (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             return cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
-        # UI text elements for explore mode
+        # UI text elements for explore mode (Clean ASCII icons for Panda3D font)
         legend = Text(
             text="<yellow>HAND CONTROLS\n\n<orange>RIGHT HAND (ALWAYS ACTIVE)\n"
-                 "<white>🖐 Open Palm   : Enable View Control\n"
-                 "<white>✊ Fist        : Freeze View\n"
-                 "<white>← Move Left   : Look Left\n"
-                 "<white>→ Move Right  : Look Right\n"
-                 "<white>↑ Move Up     : Look Up\n"
-                 "<white>↓ Move Down   : Look Down\n\n"
+                 "<white>[Open Palm]  : Enable View Control\n"
+                 "<white>[Fist]       : Freeze View\n"
+                 "<white><- Move Left : Look Left\n"
+                 "<white>-> Move Right: Look Right\n"
+                 "<white>^  Move Up   : Look Up\n"
+                 "<white>v  Move Down : Look Down\n\n"
                  "<cyan>LEFT HAND (WALK MODE)\n"
-                 "<white>✌ Peace       : Toggle Flight Mode\n"
-                 "<white>🖐 move palm up   : Move Forward\n"
-                 "<white>🖐 move palm Down   : Move Backward\n"
-                 "<white>✊ Fist        : Stop\n\n"
+                 "<white>[Peace]      : Toggle Flight Mode\n"
+                 "<white>Move Palm Up : Move Forward\n"
+                 "<white>Move Palm Dn : Move Backward\n"
+                 "<white>[Fist]       : Stop\n\n"
                  "<lime>LEFT HAND (FLIGHT MODE)\n"
-                 "<white> thumbs up     : position Reset\n"
-                 "<white>✌ Peace       : Toggle Walk Mode\n"
-                 "<white>☝  Index Up    : Fly Up\n"
-                 "<white>👇  Index Down  : Fly Down\n"
-                 "<white>🖐 move Palm up  : Fly Forward\n"
-                 "<white>🖐 move Palm Down   : Fly Backward\n"
-                 "<white>✊ Fist        : ...",
+                 "<white>[Thumbs Up]  : Position Reset\n"
+                 "<white>[Peace]      : Toggle Walk Mode\n"
+                 "<white>[Index Up]   : Fly Up\n"
+                 "<white>[Index Down] : Fly Down\n"
+                 "<white>Move Palm Up : Fly Forward\n"
+                 "<white>Move Palm Dn : Fly Backward\n"
+                 "<white>[Fist]       : Stop",
             position=window.top_left + Vec2(0.02, -0.02),
             origin=(-0.5, 0.5), scale=0.8, background=True,
         )
         right_status = Text(text="Right: Not Detected", position=(0.3, -0.35),
                             scale=1.2, color=color.orange)
         left_status = Text(text="Left: Not Detected", position=(0.3, -0.40),
-                           scale=1.2, color=color.cyan)
+                            scale=1.2, color=color.cyan)
         flight_status = Text(text="Mode: Grounded", position=(0.3, -0.45),
                              scale=1.2, color=color.green)
 
