@@ -1,6 +1,6 @@
 {
   "query": "car",
-  "timestamp": 1788361948.933183,
+  "timestamp": 1790018230.5218482,
   "results": [
     {
       "name": "7365261af0b44c26b66d8272e5158428.glb",
@@ -73,6 +73,12 @@
       "path": "/home/youngoat/Coding/CLARITY_LAB/models/Futuristic_racing_car_-_\"Molnia\".glb",
       "source": "local",
       "mode": "inspect"
+    },
+    {
+      "name": "iitj_campus.csv",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/iitj_campus.csv",
+      "source": "local",
+      "mode": "explore"
     },
     {
       "name": "Future Car",
