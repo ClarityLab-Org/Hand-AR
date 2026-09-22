@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import time as _time
 from typing import Dict, List, Optional, Tuple
-from panda3d.core import AntialiasAttrib, TextureStage
+from panda3d.core import TextureStage
 from ursina import *
 from ursina.prefabs.first_person_controller import FirstPersonController
 
@@ -42,12 +42,10 @@ def _generate_contrast_colors(r_arr: np.ndarray, g_arr: np.ndarray, b_arr: np.nd
     b = b_arr.astype(np.float32) / 255.0
 
     mean_val = (r + g + b) / 3.0
-    # Increase saturation
     r = np.clip(mean_val + 1.35 * (r - mean_val), 0.0, 1.0)
     g = np.clip(mean_val + 1.35 * (g - mean_val), 0.0, 1.0)
     b = np.clip(mean_val + 1.35 * (b - mean_val), 0.0, 1.0)
 
-    # Gamma adjust
     r = np.power(r, 0.92)
     g = np.power(g, 0.92)
     b = np.power(b, 0.92)
@@ -89,7 +87,7 @@ class ExploreEnvironment:
         self.color_modes = ["Natural RGB", "Elevation Heatmap", "Vibrant RGB"]
         self.color_mode_idx = 0
 
-        # Construct point mesh (render_points_in_3d=False gives screen-space 1px/2px pixel points)
+        # Construct point mesh
         self.mesh = Mesh(
             vertices=self.vertices,
             colors=self.palette_rgb,
@@ -102,10 +100,6 @@ class ExploreEnvironment:
         self.point_thickness_levels = [1, 2, 3]
         self.current_thickness_idx = 0
         self.set_point_thickness(self.point_thickness_levels[self.current_thickness_idx])
-
-        # Atmosphere & fog depth
-        scene.fog_color = color.color(0, 0, 0.07)
-        scene.fog_density = (80, 650)
 
         # Player controller
         self.player = FirstPersonController()
@@ -125,11 +119,6 @@ class ExploreEnvironment:
         self.flight_toggle_cooldown: float = 4
         self.reset_cooldown: float = 0
         self.reset_cooldown_duration: float = reset_cooldown_duration
-
-        # Movement speeds (m/s)
-        self.walk_speed: float = 5.0
-        self.flight_speed: float = 14.0
-        self.vertical_speed: float = 7.0
 
     def set_point_thickness(self, thickness: int) -> None:
         """Configures hardware point size in screen pixels."""
@@ -188,9 +177,7 @@ class ExploreEnvironment:
 
     def update_movement_and_terrain(self, left_state: Dict) -> None:
         """Updates movement, flight toggling, terrain following, and collision."""
-        current_speed = self.flight_speed if self.is_flying else self.walk_speed
-
-        # Flight toggle + reset via gestures
+        # Flight toggle + reset
         if left_state.get('visible'):
             if (left_state.get('gesture') == 'Toggle Flight' and
                     _time.time() > self.flight_toggle_cooldown):
@@ -207,25 +194,9 @@ class ExploreEnvironment:
 
             if not self.is_flying:
                 if left_state.get('gesture') == 'Backward':
-                    self.player.position -= self.player.forward * current_speed * time.dt
+                    self.player.position -= self.player.forward * 2.0 * time.dt
                 elif left_state.get('gesture') == 'Forward':
-                    self.player.position += self.player.forward * current_speed * time.dt
-
-        # Keyboard fallback navigation
-        if held_keys['w'] or held_keys['up arrow']:
-            self.player.position += self.player.forward * current_speed * time.dt
-        if held_keys['s'] or held_keys['down arrow']:
-            self.player.position -= self.player.forward * current_speed * time.dt
-        if held_keys['a'] or held_keys['left arrow']:
-            self.player.position -= self.player.right * current_speed * time.dt
-        if held_keys['d'] or held_keys['right arrow']:
-            self.player.position += self.player.right * current_speed * time.dt
-
-        if self.is_flying:
-            if held_keys['space']:
-                self.player.y += self.vertical_speed * time.dt
-            if held_keys['left shift'] or held_keys['c']:
-                self.player.y -= self.vertical_speed * time.dt
+                    self.player.position += self.player.forward * 2.0 * time.dt
 
         # Terrain height computation
         px, pz = self.player.x, self.player.z
@@ -242,13 +213,13 @@ class ExploreEnvironment:
         if self.is_flying:
             if left_state.get('visible'):
                 if left_state.get('gesture') == 'Up':
-                    self.player.y += self.vertical_speed * time.dt
+                    self.player.y += 2 * time.dt
                 elif left_state.get('gesture') == 'Down':
-                    self.player.y -= self.vertical_speed * time.dt
+                    self.player.y -= 2 * time.dt
                 elif left_state.get('gesture') == 'Backward':
-                    self.player.position -= self.player.forward * self.flight_speed * time.dt
+                    self.player.position -= self.player.forward * 2.0 * time.dt
                 elif left_state.get('gesture') == 'Forward':
-                    self.player.position += self.player.forward * self.flight_speed * time.dt
+                    self.player.position += self.player.forward * 2.0 * time.dt
             if self.player.y < ground_y + 1.8:
                 self.player.y = ground_y + 1.8
         else:
@@ -282,3 +253,4 @@ class ExploreEnvironment:
         else:
             self.player.prev_x = self.player.x
             self.player.prev_z = self.player.z
+
