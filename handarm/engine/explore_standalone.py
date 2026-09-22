@@ -130,19 +130,23 @@ def main() -> None:
         position=window.top_left + Vec2(0.02, -0.02),
         origin=(-0.5, 0.5), scale=0.8, background=True,
     )
-    right_status = Text(text="Right: Not Detected", position=(0.3, -0.35),
-                        scale=1.2, color=color.orange)
-    left_status = Text(text="Left: Not Detected", position=(0.3, -0.40),
-                       scale=1.2, color=color.cyan)
-    flight_status = Text(text="Mode: Grounded", position=(0.3, -0.45),
-                         scale=1.2, color=color.green)
+    right_status = Text(text="Right: Not Detected", position=(0.3, -0.30),
+                        scale=1.1, color=color.orange)
+    left_status = Text(text="Left: Not Detected", position=(0.3, -0.35),
+                       scale=1.1, color=color.cyan)
+    flight_status = Text(text="Mode: Grounded", position=(0.3, -0.40),
+                         scale=1.1, color=color.green)
+    color_status = Text(text="Color: Natural RGB [C]", position=(0.3, -0.45),
+                        scale=1.1, color=color.yellow)
+    size_status = Text(text="Point Size: 1px [P]", position=(0.3, -0.50),
+                       scale=1.1, color=color.white)
 
     # Point cloud environment (standalone: ::6 downsample, thickness 4, no reset cooldown)
     print("Loading Point Cloud Environment...")
     env = ExploreEnvironment(
         csv_path,
         downsample_step=1,
-        point_thickness=1.5,
+        point_thickness=1.0,
         reset_cooldown_duration=0.0,
     )
 
@@ -187,6 +191,14 @@ def main() -> None:
             application.quit()
         elif key == 'r':
             env.reset_player()
+        elif key == 'c':
+            new_mode = env.cycle_color_mode()
+            color_status.text = f"Color: {new_mode} [C]"
+        elif key == 'p':
+            new_size = env.cycle_point_thickness()
+            size_status.text = f"Point Size: {new_size} [P]"
+        elif key == 'f':
+            env.is_flying = not env.is_flying
 
     # Register with Ursina
     _main_mod = sys.modules['__main__']

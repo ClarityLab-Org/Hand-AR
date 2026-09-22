@@ -94,7 +94,15 @@ def main() -> None:
             vertices = [Vec3(x, y, z) for x, y, z in zip(df["x"], df["y"], df["z"])]
             point_colors = [(r / 255.0, g / 255.0, b / 255.0, 1.0)
                             for r, g, b in zip(df["r"], df["g"], df["b"])]
-            car.model = Mesh(vertices=vertices, colors=point_colors, mode='point')
+            mesh = Mesh(
+                vertices=vertices,
+                colors=point_colors,
+                mode='point',
+                render_points_in_3d=False,
+                thickness=1,
+            )
+            mesh.clearTexGen(TextureStage.getDefault())
+            car.model = mesh
             car.set_render_mode_thickness(1)
             car.set_render_mode_perspective(False)
         else:
@@ -256,12 +264,16 @@ def main() -> None:
             position=window.top_left + Vec2(0.02, -0.02),
             origin=(-0.5, 0.5), scale=0.8, background=True,
         )
-        right_status = Text(text="Right: Not Detected", position=(0.3, -0.35),
-                            scale=1.2, color=color.orange)
-        left_status = Text(text="Left: Not Detected", position=(0.3, -0.40),
-                            scale=1.2, color=color.cyan)
-        flight_status = Text(text="Mode: Grounded", position=(0.3, -0.45),
-                             scale=1.2, color=color.green)
+        right_status = Text(text="Right: Not Detected", position=(0.3, -0.30),
+                            scale=1.1, color=color.orange)
+        left_status = Text(text="Left: Not Detected", position=(0.3, -0.35),
+                           scale=1.1, color=color.cyan)
+        flight_status = Text(text="Mode: Grounded", position=(0.3, -0.40),
+                             scale=1.1, color=color.green)
+        color_status = Text(text="Color: Natural RGB [C]", position=(0.3, -0.45),
+                            scale=1.1, color=color.yellow)
+        size_status = Text(text="Point Size: 1px [P]", position=(0.3, -0.50),
+                           scale=1.1, color=color.white)
 
     # -----------------------------------------------------------------------
     # Shared UI
@@ -551,6 +563,17 @@ def main() -> None:
         elif key == 'r':
             if viewer_mode == "explore" and env:
                 env.reset_player()
+        elif key == 'c':
+            if viewer_mode == "explore" and env:
+                new_mode = env.cycle_color_mode()
+                color_status.text = f"Color: {new_mode} [C]"
+        elif key == 'p':
+            if viewer_mode == "explore" and env:
+                new_size = env.cycle_point_thickness()
+                size_status.text = f"Point Size: {new_size} [P]"
+        elif key == 'f':
+            if viewer_mode == "explore" and env:
+                env.is_flying = not env.is_flying
 
     # -----------------------------------------------------------------------
     # Register with Ursina's __main__ discovery
