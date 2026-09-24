@@ -274,6 +274,10 @@ def main() -> None:
                             scale=1.1, color=color.yellow)
         size_status = Text(text="Point Size: 1px [P]", position=(0.3, -0.50),
                            scale=1.1, color=color.white)
+        chunk_status = Text(text="Streamed: --", position=(0.3, -0.55),
+                            scale=1.0, color=color.lime)
+        landmark_status = Text(text="Jump: [1] Academic [2] Labs [3] Plaza [4] Gate",
+                               position=(0.3, -0.60), scale=0.9, color=color.azure)
 
     # -----------------------------------------------------------------------
     # Shared UI
@@ -553,6 +557,10 @@ def main() -> None:
                                   else "Mode: Grounded")
             flight_status.color = color.red if env.is_flying else color.green
 
+            if env.is_chunked:
+                pts_count = sum(len(c.vertices) for c in env.loaded_chunks.values())
+                chunk_status.text = f"Streamed: {len(env.loaded_chunks)} chunks ({pts_count/1e6:.1f}M pts)"
+
     # -----------------------------------------------------------------------
     # Input handler
     # -----------------------------------------------------------------------
@@ -574,6 +582,11 @@ def main() -> None:
         elif key == 'f':
             if viewer_mode == "explore" and env:
                 env.is_flying = not env.is_flying
+        elif key in ('1', '2', '3', '4'):
+            if viewer_mode == "explore" and env:
+                name = env.jump_to_landmark(int(key) - 1)
+                if name:
+                    landmark_status.text = f"At: {name} [{key}]"
 
     # -----------------------------------------------------------------------
     # Register with Ursina's __main__ discovery
