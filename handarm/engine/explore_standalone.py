@@ -17,6 +17,7 @@ import psutil
 import sys
 import time as _time
 
+from typing import Any, Optional
 from panda3d.core import Texture as P3DTexture
 from ursina import *
 
@@ -31,18 +32,20 @@ from handarm.tracking.gestures import (
 from handarm.tracking.hand_tracker import HandTracker
 
 
-def main() -> None:
+def main(model_input: Optional[Any] = None) -> None:
     """Main entry point for standalone explore mode."""
 
     # File loading
-    csv_path = "pointcloud_sample.csv"
-    if len(sys.argv) > 1:
-        csv_path = sys.argv[1]
+    target = model_input
+    if target is None:
+        if len(sys.argv) > 1:
+            target = sys.argv[1]
+        else:
+            target = "pointcloud_sample.csv"
 
-    if not os.path.exists(csv_path):
-        print(f"ERROR: Model file not found: {csv_path}")
+    if isinstance(target, str) and not os.path.exists(target):
+        print(f"ERROR: Model file not found: {target}")
         sys.exit(1)
-
     # -----------------------------------------------------------------------
     # Gesture classifier (explore.py standalone variant)
     # -----------------------------------------------------------------------
@@ -133,11 +136,12 @@ def main() -> None:
     # Point cloud environment (standalone: ::6 downsample, thickness 4, no reset cooldown)
     print("Loading Point Cloud Environment...")
     env = ExploreEnvironment(
-        csv_path,
+        target,
         downsample_step=1,
         point_thickness=1.0,
         reset_cooldown_duration=0.0,
     )
+
 
     right_status = Text(text="Right: Not Detected", position=(0.3, -0.30),
                         scale=1.1, color=color.orange)

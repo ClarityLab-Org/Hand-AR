@@ -6,7 +6,7 @@ Dynamically streams high-density LiDAR chunks based on camera proximity and view
 import json
 import os
 import time as _time
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple,Union
 import numpy as np
 import pandas as pd
 from panda3d.core import TextureStage
@@ -116,11 +116,11 @@ class ExploreEnvironment:
     LOAD_RADIUS: float = 85.0     # Radius (meters) to stream high-density building chunks
     UNLOAD_RADIUS: float = 120.0  # Radius (meters) to evict out-of-range chunks
 
-    def __init__(self, target_path: str, downsample_step: int = 1,
+    def __init__(self, target_path: Union[str, pd.DataFrame], downsample_step: int = 1,
                  point_thickness: float = 1.0,
                  reset_cooldown_duration: float = 2.0) -> None:
         """Initializes point cloud streamer, overview LOD, and first-person controller."""
-        self.target_path = target_path
+        self.target_path = target_path if isinstance(target_path, str) else "preloaded_pointcloud"
         self.point_thickness_levels = [1, 2, 3]
         self.current_thickness_idx = 0
         self.current_thickness = self.point_thickness_levels[self.current_thickness_idx]
@@ -129,13 +129,15 @@ class ExploreEnvironment:
         self.color_mode_idx = 0
 
         # Check if spatial chunks directory exists
-        chunks_dir = target_path
-        if not (os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))):
-            default_chunks_dir = os.path.join(os.path.dirname(target_path), "iitj_chunks")
-            if os.path.exists(os.path.join(default_chunks_dir, "manifest.json")):
-                chunks_dir = default_chunks_dir
+        is_df = isinstance(target_path, pd.DataFrame)
+        chunks_dir = target_path if (not is_df and isinstance(target_path, str)) else ""
+        if not is_df and isinstance(target_path, str):
+            if not (os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))):
+                default_chunks_dir = os.path.join(os.path.dirname(target_path), "iitj_chunks")
+                if os.path.exists(os.path.join(default_chunks_dir, "manifest.json")):
+                    chunks_dir = default_chunks_dir
 
-        self.is_chunked = os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))
+        self.is_chunked = not is_df and bool(chunks_dir) and os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))
         self.chunks_dir = chunks_dir
 
         # Atmosphere & fog depth
@@ -191,9 +193,20 @@ class ExploreEnvironment:
             self.points_y = np.empty((0,), dtype=np.float32)
 
         else:
-            # Fallback for single CSV files
-            print(f"📄 Loading single point cloud file: {target_path}...")
-            df = pd.read_csv(target_path)
+            if isinstance(target_path, pd.DataFrame):
+                print("📄 Loading point cloud from preloaded DataFrame...")
+                df = target_path.copy()
+            else:
+                ext = os.path.splitext(str(target_path))[1].lower()
+                if ext in ('.laz', '.las'):
+                    print(f"📦 Loading LiDAR file directly: {target_path}...")
+                    from handarm.geometry.laz_loader import load_laz_to_dataframe
+                    df = load_laz_to_dataframe(str(target_path), auto_center=True)
+                else:
+                    # Fallback for single CSV files
+                    print(f"📄 Loading single point cloud file: {target_path}...")
+                    df = pd.read_csv(target_path)
+
             df = df.iloc[::downsample_step]
             df = auto_align_up_axis(df)
 

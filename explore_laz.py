@@ -90,13 +90,18 @@ Examples:
     if ext not in (".laz", ".las"):
         print(f"⚠️ Warning: Expected a .laz or .las file, but got: {ext}")
 
-    # Verify laspy is installed
+    # Verify laspy is installed, fallback to venv if missing
     try:
         import laspy
     except ImportError:
-        print("❌ Error: laspy is required to stream .laz files directly.")
-        print("   Please install it with: pip install 'laspy[lazrs]'")
-        sys.exit(1)
+        venv_python = Path(__file__).resolve().parent / "DC_env" / "bin" / "python"
+        if venv_python.is_file():
+            print("⚠️ Found virtual environment. Re-running with venv python...")
+            os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+        else:
+            print("❌ Error: laspy is required to stream .laz files directly.")
+            print("   Please install it with: pip install 'laspy[lazrs]'")
+            sys.exit(1)
 
     print("=" * 65)
     print("🏛️  Hand-AR Direct LAZ/LAS LiDAR Explorer")
@@ -114,11 +119,20 @@ Examples:
         use_cache=not args.no_cache,
     )
 
-    # Pass into standalone explore engine via sys.argv
-    # The ExploreEnvironment directly consumes the path
-    sys.argv = [sys.argv[0], laz_path]
+    # Write temporary CSV as fallback for any component that only accepts CSV paths
+    temp_csv = os.path.join(os.path.dirname(laz_path), f".{Path(laz_path).stem}_stream.csv")
+    df.to_csv(temp_csv, index=False)
+    sys.argv = [sys.argv[0], temp_csv]
+
     from handarm.engine.explore_standalone import main as explore_main
-    explore_main()
+    try:
+        explore_main(model_input=df)
+    finally:
+        if os.path.exists(temp_csv):
+            try:
+                os.remove(temp_csv)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
