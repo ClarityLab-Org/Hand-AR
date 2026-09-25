@@ -268,8 +268,9 @@ def main() -> None:
                             scale=1.1, color=color.orange)
         left_status = Text(text="Left: Not Detected", position=(0.3, -0.35),
                            scale=1.1, color=color.cyan)
-        flight_status = Text(text="Mode: Grounded", position=(0.3, -0.40),
-                             scale=1.1, color=color.green)
+        flight_status = Text(text="Mode: Flying" if (env and env.is_flying) else "Mode: Grounded",
+                             position=(0.3, -0.40), scale=1.1,
+                             color=color.cyan if (env and env.is_flying) else color.green)
         color_status = Text(text="Color: Natural RGB [C]", position=(0.3, -0.45),
                             scale=1.1, color=color.yellow)
         size_status = Text(text="Point Size: 1px [P]", position=(0.3, -0.50),

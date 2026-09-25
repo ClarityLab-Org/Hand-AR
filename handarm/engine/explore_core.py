@@ -145,6 +145,7 @@ class ExploreEnvironment:
         # Loaded chunks container
         self.loaded_chunks: Dict[str, LoadedChunk] = {}
         self.chunk_manifest: List[Dict] = []
+        self.chunk_metadata: Dict[str, Dict] = {}
         self.landmarks: List[Dict] = []
         self.overview_entity: Optional[Entity] = None
         self.overview_mesh: Optional[Mesh] = None
@@ -154,6 +155,10 @@ class ExploreEnvironment:
             with open(os.path.join(self.chunks_dir, "manifest.json")) as f:
                 manifest_data = json.load(f)
                 self.chunk_manifest = manifest_data.get("chunks", [])
+                self.chunk_metadata = {
+                    chunk["file"]: chunk for chunk in self.chunk_manifest
+                    if "file" in chunk
+                }
                 self.landmarks = manifest_data.get("landmarks", [])
                 bounds = manifest_data.get("bounds", {})
                 self.min_x = bounds.get("min_x", -300.0)
@@ -164,11 +169,11 @@ class ExploreEnvironment:
             # Load Overview LOD (lightweight 100k point cloud of entire campus)
             overview_file = os.path.join(self.chunks_dir, "overview.npz")
             if os.path.exists(overview_file):
-                ov_data = np.load(overview_file)
-                ov_verts = [Vec3(x, y, z) for x, y, z in ov_data["vertices"]]
-                self.ov_palette_rgb = [Vec4(r, g, b, a) for r, g, b, a in ov_data["rgb"]]
-                self.ov_palette_elevation = [Vec4(r, g, b, a) for r, g, b, a in ov_data["elevation"]]
-                self.ov_palette_contrast = [Vec4(r, g, b, a) for r, g, b, a in ov_data["vibrant"]]
+                with np.load(overview_file) as ov_data:
+                    ov_verts = [Vec3(x, y, z) for x, y, z in ov_data["vertices"]]
+                    self.ov_palette_rgb = [Vec4(r, g, b, a) for r, g, b, a in ov_data["rgb"]]
+                    self.ov_palette_elevation = [Vec4(r, g, b, a) for r, g, b, a in ov_data["elevation"]]
+                    self.ov_palette_contrast = [Vec4(r, g, b, a) for r, g, b, a in ov_data["vibrant"]]
 
                 self.overview_mesh = Mesh(
                     vertices=ov_verts,
@@ -270,20 +275,19 @@ class ExploreEnvironment:
                 if filename not in self.loaded_chunks:
                     chunk_file_path = os.path.join(self.chunks_dir, filename)
                     if os.path.exists(chunk_file_path):
-                        data = np.load(chunk_file_path)
-                        chunk = LoadedChunk(
-                            data,
-                            thickness=self.current_thickness,
-                            color_mode=self.color_modes[self.color_mode_idx],
-                        )
+                        with np.load(chunk_file_path) as data:
+                            chunk = LoadedChunk(
+                                data,
+                                thickness=self.current_thickness,
+                                color_mode=self.color_modes[self.color_mode_idx],
+                            )
                         self.loaded_chunks[filename] = chunk
 
         # Evict chunks outside UNLOAD_RADIUS
         to_remove = []
         for filename, chunk in self.loaded_chunks.items():
             if filename not in needed_files:
-                # Find center in manifest
-                meta = next((m for m in self.chunk_manifest if m["file"] == filename), None)
+                meta = self.chunk_metadata.get(filename)
                 if meta:
                     cx, _, cz = meta["center"]
                     dist_sq = (cx - px) ** 2 + (cz - pz) ** 2

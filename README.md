@@ -44,9 +44,11 @@ Hand-ArM2 is a real-time desktop application for controlling and manipulating 3D
 
 ```
 Hand-ArM2/
-├── opening.py          # Main UI launcher
-├── trial2.py           # 3D interaction engine
-├── glb_scanner.py      # Model search & download
+├── opening.py          # GUI launcher
+├── trial2.py           # 3D viewer entry point
+├── explore.py          # Standalone point-cloud explorer
+├── plotcsv.py          # Point-cloud plotting utility
+├── handarm/            # Application package
 ├── models/             # Local 3D model files
 ├── screenshots/        # Captured screenshots
 ├── requirements.txt
@@ -102,7 +104,7 @@ To enable online model search and download:
 2. Create a `.env` file in the project root:
 
 ```env
-SKETCHFAB_API_KEY=your_api_token_here
+SKETCHFAB_TOKEN=your_api_token_here
 ```
 
 > The Sketchfab API is free to use. Without a key, local model loading still works normally.
@@ -129,9 +131,5 @@ requests>=2.31.0
 
 
 
-IMP 
-
-the csv files are not included
-download it from : [drive.google.com/drive/folders/1g7xOP7ZgGnuZT_P6auts-jEuGTKHHnw9?usp=sharing](https://drive.google.com/drive/folders/1g7xOP7ZgGnuZT_P6auts-jEuGTKHHnw9?usp=sharing)
-
-save them in the models folder
+Point-cloud CSV files can be placed in the `models/` directory. The tracked
+IIT Jodhpur campus dataset is available as `models/iitj_campus.csv`.

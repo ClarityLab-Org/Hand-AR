@@ -4,9 +4,10 @@ Panda3D==1.10.16
 panda3d-gltf==1.3.0
 panda3d-simplepbr==0.13.1
 mediapipe==0.10.9
-opencv-python==4.9.0.80
 opencv-contrib-python==4.9.0.80
 numpy==1.26.4
+pandas
+laspy
 Pillow==10.3.0
 psutil>=5.9.0
 python-dotenv>=1.0.0

@@ -130,21 +130,6 @@ def main() -> None:
         position=window.top_left + Vec2(0.02, -0.02),
         origin=(-0.5, 0.5), scale=0.8, background=True,
     )
-    right_status = Text(text="Right: Not Detected", position=(0.3, -0.30),
-                        scale=1.1, color=color.orange)
-    left_status = Text(text="Left: Not Detected", position=(0.3, -0.35),
-                       scale=1.1, color=color.cyan)
-    flight_status = Text(text="Mode: Grounded", position=(0.3, -0.40),
-                         scale=1.1, color=color.green)
-    color_status = Text(text="Color: Natural RGB [C]", position=(0.3, -0.45),
-                        scale=1.1, color=color.yellow)
-    size_status = Text(text="Point Size: 1px [P]", position=(0.3, -0.50),
-                       scale=1.1, color=color.white)
-    chunk_status = Text(text="Streamed: --", position=(0.3, -0.55),
-                        scale=1.0, color=color.lime)
-    landmark_status = Text(text="Jump: [1] Academic [2] Labs [3] Plaza [4] Gate",
-                           position=(0.3, -0.60), scale=0.9, color=color.azure)
-
     # Point cloud environment (standalone: ::6 downsample, thickness 4, no reset cooldown)
     print("Loading Point Cloud Environment...")
     env = ExploreEnvironment(
@@ -153,6 +138,22 @@ def main() -> None:
         point_thickness=1.0,
         reset_cooldown_duration=0.0,
     )
+
+    right_status = Text(text="Right: Not Detected", position=(0.3, -0.30),
+                        scale=1.1, color=color.orange)
+    left_status = Text(text="Left: Not Detected", position=(0.3, -0.35),
+                       scale=1.1, color=color.cyan)
+    flight_status = Text(text="Mode: Flying" if env.is_flying else "Mode: Grounded",
+                         position=(0.3, -0.40), scale=1.1,
+                         color=color.cyan if env.is_flying else color.green)
+    color_status = Text(text="Color: Natural RGB [C]", position=(0.3, -0.45),
+                        scale=1.1, color=color.yellow)
+    size_status = Text(text="Point Size: 1px [P]", position=(0.3, -0.50),
+                       scale=1.1, color=color.white)
+    chunk_status = Text(text="Streamed: --", position=(0.3, -0.55),
+                        scale=1.0, color=color.lime)
+    landmark_status = Text(text="Jump: [1] Academic [2] Labs [3] Plaza [4] Gate",
+                           position=(0.3, -0.60), scale=0.9, color=color.azure)
 
     # -----------------------------------------------------------------------
     # Update loop

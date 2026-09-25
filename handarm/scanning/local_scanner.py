@@ -1,10 +1,9 @@
 """Local filesystem scanner for 3D model and point cloud files."""
 
-import json
 import os
 from typing import Dict, List
 
-from handarm.scanning.database import INDEX_FILE
+from handarm.scanning.database import load_index
 
 
 def scan_local(root_folder: str) -> List[Dict]:
@@ -31,15 +30,10 @@ def scan_local(root_folder: str) -> List[Dict]:
     if not os.path.exists(db_path):
         db_path = os.path.join(root_folder, "database.json")
 
-    if os.path.exists(db_path):
-        try:
-            with open(db_path, "r") as f:
-                data = json.load(f)
-                for item in data.get("results", []):
-                    if "name" in item and "mode" in item:
-                        existing_modes[item["name"]] = item["mode"]
-        except Exception as e:
-            print(f"Could not read existing modes: {e}")
+    data = load_index(db_path)
+    for item in data.get("results", []):
+        if "name" in item and "mode" in item:
+            existing_modes[item["name"]] = item["mode"]
 
     for root, dirs, files in os.walk(root_folder):
         for file in files:

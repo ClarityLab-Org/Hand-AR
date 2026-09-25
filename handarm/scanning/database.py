@@ -21,14 +21,15 @@ def save_index(data: Dict[str, Any]) -> None:
     os.replace(temp_file, INDEX_FILE)
 
 
-def load_index() -> Dict[str, Any]:
+def load_index(path: str | None = None) -> Dict[str, Any]:
     """Loads the search database index from database.json.
     Returns empty dict if file doesn't exist or is corrupted.
     """
-    if not os.path.exists(INDEX_FILE):
+    path = path or INDEX_FILE
+    if not os.path.exists(path):
         return {}
     try:
-        with open(INDEX_FILE, "r") as f:
+        with open(path, "r") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         print("Corrupted or empty database. Resetting...")

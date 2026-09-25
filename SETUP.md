@@ -106,25 +106,25 @@ pip install -r requirements.txt
 
 - Ensure good lighting
 - Keep hands within camera view
-- Adjust `min_detection_confidence` in trial2.py (lines 183-185) if needed
+- Adjust `MIN_DETECTION_CONFIDENCE` in `.env` if needed
 
 ### Low FPS / Performance Issues
 
 **Check system resources**:
 - Monitor CPU/RAM usage (shown in UI)
 - Close other applications
-- Reduce camera feed resolution in code (line 138: `FEED_W, FEED_H`)
+- Reduce `FEED_WIDTH` and `FEED_HEIGHT` in `.env`
 
 ## File Structure
 
 ```
 Hand-AR/
-├── trial2.py              # Main interactive 3D viewer
 ├── opening.py             # GUI menu for model selection
-├── fly_mode.py            # Flight camera mode
-├── trial3.py              # Terrain viewer
+├── trial2.py              # Interactive 3D viewer
+├── explore.py             # Standalone point-cloud explorer
+├── plotcsv.py             # Point-cloud plotting utility
+├── handarm/               # Application package
 ├── models/                # 3D model files (.glb, .obj, etc.)
-├── models_compressed/     # Optimized model versions
 ├── screenshots/           # Captured screenshots
 ├── requirements.txt       # Python dependencies
 └── handtrack_env/         # Virtual environment (auto-created)
@@ -168,10 +168,9 @@ MIN_DETECTION_CONFIDENCE=0.8
 
 ## Performance Tips
 
-1. Use compressed models from `models_compressed/`
-2. Close unnecessary background applications
-3. Ensure adequate lighting for hand detection
-4. Use a USB webcam instead of laptop built-in for better stability
+1. Close unnecessary background applications
+2. Ensure adequate lighting for hand detection
+3. Use a USB webcam instead of laptop built-in for better stability
 
 ## Reporting Issues
 

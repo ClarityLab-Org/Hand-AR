@@ -5,6 +5,7 @@ import time
 from typing import Dict, List, Optional
 
 import requests
+from requests import RequestException
 
 from handarm.config import SKETCHFAB_TOKEN
 from handarm.scanning.database import load_index, save_index
@@ -12,6 +13,7 @@ from handarm.scanning.local_scanner import scan_local
 
 # Graceful handling of missing token (Bug fix: was raising ValueError)
 _token_available: bool = bool(SKETCHFAB_TOKEN)
+_REQUEST_TIMEOUT = 30
 if not _token_available:
     print("ℹ No SKETCHFAB_TOKEN found in .env. Web search/download disabled.")
     print("  Local model loading still works normally.")
@@ -38,7 +40,8 @@ def search_web(query: str = "car") -> List[Dict]:
     }
 
     try:
-        res = requests.get(url, params=params)
+        res = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
+        res.raise_for_status()
         data = res.json()
 
         for model in data.get("results", []):            
@@ -53,7 +56,7 @@ def search_web(query: str = "car") -> List[Dict]:
                 "viewer": viewer_link,
                 "source": "web"
             })
-    except Exception as e:
+    except (RequestException, ValueError) as e:
         print("Web search failed:", e)
     return results
 
@@ -86,7 +89,8 @@ def download_glb(model: Dict, save_folder: str) -> Optional[str]:
         }
 
         url = f"https://api.sketchfab.com/v3/models/{uid}/download"
-        res = requests.get(url, headers=headers)
+        res = requests.get(url, headers=headers, timeout=_REQUEST_TIMEOUT)
+        res.raise_for_status()
         data = res.json()
 
         if "glb" in data:
@@ -102,7 +106,7 @@ def download_glb(model: Dict, save_folder: str) -> Optional[str]:
 
         print(f"Downloading {name}...")
 
-        r = requests.get(download_url, stream=True)
+        r = requests.get(download_url, stream=True, timeout=_REQUEST_TIMEOUT)
         r.raise_for_status()
         with open(save_path, "wb") as f:
             for chunk in r.iter_content(1024):
@@ -124,7 +128,7 @@ def download_glb(model: Dict, save_folder: str) -> Optional[str]:
 
         return save_path
 
-    except Exception as e:
+    except (OSError, RequestException, ValueError) as e:
         print("Download failed:", e)
         return None
 

@@ -105,4 +105,7 @@ class HandTracker:
     def stop(self) -> None:
         """Stops background thread and releases camera."""
         self.running = False
+        if self._thread.is_alive():
+            self._thread.join(timeout=1.0)
         self._cap.release()
+        self._hands.close()
