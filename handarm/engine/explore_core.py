@@ -6,7 +6,7 @@ Dynamically streams high-density LiDAR chunks based on camera proximity and view
 import json
 import os
 import time as _time
-from typing import Dict, List, Optional, Set, Tuple,Union
+from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
 from panda3d.core import TextureStage
@@ -116,11 +116,12 @@ class ExploreEnvironment:
     LOAD_RADIUS: float = 85.0     # Radius (meters) to stream high-density building chunks
     UNLOAD_RADIUS: float = 120.0  # Radius (meters) to evict out-of-range chunks
 
-    def __init__(self, target_path: Union[str, pd.DataFrame], downsample_step: int = 1,
+    def __init__(self, target_path: str, point_cloud: Optional[pd.DataFrame] = None,
+                 downsample_step: int = 1,
                  point_thickness: float = 1.0,
                  reset_cooldown_duration: float = 2.0) -> None:
         """Initializes point cloud streamer, overview LOD, and first-person controller."""
-        self.target_path = target_path if isinstance(target_path, str) else "preloaded_pointcloud"
+        self.target_path = target_path
         self.point_thickness_levels = [1, 2, 3]
         self.current_thickness_idx = 0
         self.current_thickness = self.point_thickness_levels[self.current_thickness_idx]
@@ -129,15 +130,13 @@ class ExploreEnvironment:
         self.color_mode_idx = 0
 
         # Check if spatial chunks directory exists
-        is_df = isinstance(target_path, pd.DataFrame)
-        chunks_dir = target_path if (not is_df and isinstance(target_path, str)) else ""
-        if not is_df and isinstance(target_path, str):
-            if not (os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))):
-                default_chunks_dir = os.path.join(os.path.dirname(target_path), "iitj_chunks")
-                if os.path.exists(os.path.join(default_chunks_dir, "manifest.json")):
-                    chunks_dir = default_chunks_dir
+        chunks_dir = target_path
+        if not (os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))):
+            default_chunks_dir = os.path.join(os.path.dirname(target_path), "iitj_chunks")
+            if os.path.exists(os.path.join(default_chunks_dir, "manifest.json")):
+                chunks_dir = default_chunks_dir
 
-        self.is_chunked = not is_df and bool(chunks_dir) and os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))
+        self.is_chunked = os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))
         self.chunks_dir = chunks_dir
 
         # Atmosphere & fog depth
@@ -153,7 +152,7 @@ class ExploreEnvironment:
         self.overview_mesh: Optional[Mesh] = None
 
         if self.is_chunked:
-            print(f"⚡ Initializing Dynamic Spatial Streamer from {self.chunks_dir}...")
+            print(f" Initializing Dynamic Spatial Streamer from {self.chunks_dir}...")
             with open(os.path.join(self.chunks_dir, "manifest.json")) as f:
                 manifest_data = json.load(f)
                 self.chunk_manifest = manifest_data.get("chunks", [])
@@ -192,52 +191,47 @@ class ExploreEnvironment:
             self.points_xz = np.empty((0, 2), dtype=np.float32)
             self.points_y = np.empty((0,), dtype=np.float32)
 
+        elif point_cloud is not None:
+            df = auto_align_up_axis(point_cloud.iloc[::downsample_step])
+            self._load_single_point_cloud(df)
         else:
-            if isinstance(target_path, pd.DataFrame):
-                print("📄 Loading point cloud from preloaded DataFrame...")
-                df = target_path.copy()
-            else:
-                ext = os.path.splitext(str(target_path))[1].lower()
-                if ext in ('.laz', '.las'):
-                    print(f"📦 Loading LiDAR file directly: {target_path}...")
-                    from handarm.geometry.laz_loader import load_laz_to_dataframe
-                    df = load_laz_to_dataframe(str(target_path), auto_center=True)
-                else:
-                    # Fallback for single CSV files
-                    print(f"📄 Loading single point cloud file: {target_path}...")
-                    df = pd.read_csv(target_path)
-
+            # Fallback for single CSV files
+            print(f" Loading single point cloud file: {target_path}...")
+            df = pd.read_csv(target_path)
             df = df.iloc[::downsample_step]
             df = auto_align_up_axis(df)
+            self._load_single_point_cloud(df)
 
-            self.points_xz = np.array([df["x"], df["z"]]).T
-            self.points_y = np.array(df["y"])
+    def _load_single_point_cloud(self, df: pd.DataFrame) -> None:
+        """Builds the single-file point-cloud mesh and navigation bounds."""
+        self.points_xz = np.array([df["x"], df["z"]]).T
+        self.points_y = np.array(df["y"])
 
-            self.min_x = float(np.min(self.points_xz[:, 0]) + 1.0)
-            self.max_x = float(np.max(self.points_xz[:, 0]) - 1.0)
-            self.min_z = float(np.min(self.points_xz[:, 1]) + 1.0)
-            self.max_z = float(np.max(self.points_xz[:, 1]) - 1.0)
+        self.min_x = float(np.min(self.points_xz[:, 0]) + 1.0)
+        self.max_x = float(np.max(self.points_xz[:, 0]) - 1.0)
+        self.min_z = float(np.min(self.points_xz[:, 1]) + 1.0)
+        self.max_z = float(np.max(self.points_xz[:, 1]) - 1.0)
 
-            raw_r = np.array(df["r"]) if "r" in df.columns else np.full(len(df), 200)
-            raw_g = np.array(df["g"]) if "g" in df.columns else np.full(len(df), 200)
-            raw_b = np.array(df["b"]) if "b" in df.columns else np.full(len(df), 200)
+        raw_r = np.array(df["r"]) if "r" in df.columns else np.full(len(df), 200)
+        raw_g = np.array(df["g"]) if "g" in df.columns else np.full(len(df), 200)
+        raw_b = np.array(df["b"]) if "b" in df.columns else np.full(len(df), 200)
 
-            self.palette_rgb = [(r / 255.0, g / 255.0, b / 255.0, 1.0) for r, g, b in zip(raw_r, raw_g, raw_b)]
-            self.palette_elevation = _generate_elevation_colors(self.points_y)
-            self.palette_contrast = _generate_contrast_colors(raw_r, raw_g, raw_b)
+        self.palette_rgb = [(r / 255.0, g / 255.0, b / 255.0, 1.0) for r, g, b in zip(raw_r, raw_g, raw_b)]
+        self.palette_elevation = _generate_elevation_colors(self.points_y)
+        self.palette_contrast = _generate_contrast_colors(raw_r, raw_g, raw_b)
 
-            vertices = [Vec3(x, y, z) for x, y, z in zip(df["x"], df["y"], df["z"])]
-            self.single_mesh = Mesh(
-                vertices=vertices,
-                colors=self.palette_rgb,
-                mode='point',
-                render_points_in_3d=False,
-                thickness=self.current_thickness,
-            )
-            self.single_mesh.clearTexGen(TextureStage.getDefault())
-            self.single_entity = Entity(model=self.single_mesh)
-            self.single_entity.set_render_mode_perspective(False)
-            self.single_entity.set_render_mode_thickness(self.current_thickness)
+        vertices = [Vec3(x, y, z) for x, y, z in zip(df["x"], df["y"], df["z"])]
+        self.single_mesh = Mesh(
+            vertices=vertices,
+            colors=self.palette_rgb,
+            mode='point',
+            render_points_in_3d=False,
+            thickness=self.current_thickness,
+        )
+        self.single_mesh.clearTexGen(TextureStage.getDefault())
+        self.single_entity = Entity(model=self.single_mesh)
+        self.single_entity.set_render_mode_perspective(False)
+        self.single_entity.set_render_mode_thickness(self.current_thickness)
 
         # Player controller setup
         self.player = FirstPersonController()

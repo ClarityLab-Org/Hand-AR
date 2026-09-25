@@ -191,6 +191,23 @@ def launch_ursina(model_path: str, mode: str) -> None:
                      cwd=PROJECT_DIR)
 
 
+def load_laz_for_gui(parent: tk.Misc, laz_path: str, **kwargs):
+    """Load a LAZ file and turn decode failures into an actionable dialog."""
+    from handarm.geometry.laz_loader import load_laz_to_dataframe
+
+    try:
+        return load_laz_to_dataframe(laz_path, **kwargs)
+    except RuntimeError as exc:
+        messagebox.showerror(
+            "LiDAR file could not be loaded",
+            f"{os.path.basename(laz_path)} could not be decoded completely.\n\n"
+            f"{exc}\n\nRe-copy or re-export the LiDAR file, then verify it "
+            "with scripts/diagnose_laz.py.",
+            parent=parent,
+        )
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Model selector modal
 # ---------------------------------------------------------------------------

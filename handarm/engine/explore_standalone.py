@@ -16,8 +16,9 @@ import os
 import psutil
 import sys
 import time as _time
+from typing import Optional
 
-from typing import Any, Optional
+import pandas as pd
 from panda3d.core import Texture as P3DTexture
 from ursina import *
 
@@ -32,20 +33,18 @@ from handarm.tracking.gestures import (
 from handarm.tracking.hand_tracker import HandTracker
 
 
-def main(model_input: Optional[Any] = None) -> None:
+def main(point_cloud: Optional[pd.DataFrame] = None) -> None:
     """Main entry point for standalone explore mode."""
 
     # File loading
-    target = model_input
-    if target is None:
-        if len(sys.argv) > 1:
-            target = sys.argv[1]
-        else:
-            target = "pointcloud_sample.csv"
+    csv_path = "pointcloud_sample.csv"
+    if len(sys.argv) > 1:
+        csv_path = sys.argv[1]
 
-    if isinstance(target, str) and not os.path.exists(target):
-        print(f"ERROR: Model file not found: {target}")
+    if point_cloud is None and not os.path.exists(csv_path):
+        print(f"ERROR: Model file not found: {csv_path}")
         sys.exit(1)
+
     # -----------------------------------------------------------------------
     # Gesture classifier (explore.py standalone variant)
     # -----------------------------------------------------------------------
@@ -81,6 +80,18 @@ def main(model_input: Optional[Any] = None) -> None:
     # -----------------------------------------------------------------------
     app = Ursina()
     window.color = color.color(0, 0, 0.08)
+    if point_cloud is not None and point_cloud.attrs.get("is_partial"):
+        loaded = point_cloud.attrs["points_decoded"]
+        expected = point_cloud.attrs["point_count"]
+        Text(
+            text=f" PARTIAL DATASET: {loaded:,}/{expected:,} points loaded",
+            parent=camera.ui,
+            position=(0, 0.45),
+            origin=(0, 0),
+            scale=1.2,
+            color=color.red,
+            background=True,
+        )
 
     tracker = HandTracker(
         classify_hand=_classify_standalone,
@@ -136,12 +147,12 @@ def main(model_input: Optional[Any] = None) -> None:
     # Point cloud environment (standalone: ::6 downsample, thickness 4, no reset cooldown)
     print("Loading Point Cloud Environment...")
     env = ExploreEnvironment(
-        target,
+        csv_path,
+        point_cloud=point_cloud,
         downsample_step=1,
         point_thickness=1.0,
         reset_cooldown_duration=0.0,
     )
-
 
     right_status = Text(text="Right: Not Detected", position=(0.3, -0.30),
                         scale=1.1, color=color.orange)

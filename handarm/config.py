@@ -18,10 +18,10 @@ if _env_file.exists():
         from dotenv import load_dotenv
         load_dotenv(_env_file)
     except ImportError:
-        print("ℹ python-dotenv not installed. Install with: pip install python-dotenv")
+        print(" python-dotenv not installed. Install with: pip install python-dotenv")
         print("  For now, using defaults. .env file will be ignored.")
 else:
-    print(f"ℹ No .env file found. Using defaults. Copy .env.example to .env to customize.")
+    print(f" No .env file found. Using defaults. Copy .env.example to .env to customize.")
 
 # ---------------------------------------------------------------------------
 # Camera Settings
@@ -90,7 +90,7 @@ def validate_config() -> List[str]:
 # Check for validation errors on import
 _config_errors = validate_config()
 if _config_errors:
-    print("⚠️  Configuration errors found:")
+    print("  Configuration errors found:")
     for _error in _config_errors:
         print(f"  - {_error}")
     print("\nPlease check your .env file or use .env.example as reference.")

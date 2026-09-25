@@ -15,7 +15,7 @@ from handarm.scanning.local_scanner import scan_local
 _token_available: bool = bool(SKETCHFAB_TOKEN)
 _REQUEST_TIMEOUT = 30
 if not _token_available:
-    print("ℹ No SKETCHFAB_TOKEN found in .env. Web search/download disabled.")
+    print(" No SKETCHFAB_TOKEN found in .env. Web search/download disabled.")
     print("  Local model loading still works normally.")
 
 
