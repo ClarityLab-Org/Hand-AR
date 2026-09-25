@@ -23,12 +23,12 @@ def convert_laz_to_csv(
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-    print(f"📦 Opening {laz_path}...")
+    print(f" Opening {laz_path}...")
     with laspy.open(laz_path) as reader:
         # Step size based on typical point density (20.5M points in file -> ~50 step gives ~410k points)
         step = 50
 
-        print(f"🎯 Target output points: ~{target_points:,} (sampling 1 every {step} points)")
+        print(f" Target output points: ~{target_points:,} (sampling 1 every {step} points)")
 
         sampled_x, sampled_y, sampled_z = [], [], []
         sampled_r, sampled_g, sampled_b = [], [], []
@@ -59,14 +59,14 @@ def convert_laz_to_csv(
                     sampled_b.append((raw_b * scale).astype(np.uint8))
 
                 processed += len(chunk)
-                print(f"  ⏳ Read {processed:,} points (collected {sum(len(a) for a in sampled_x):,} subsampled points)...", end="\r", flush=True)
+                print(f"   Read {processed:,} points (collected {sum(len(a) for a in sampled_x):,} subsampled points)...", end="\r", flush=True)
 
         except Exception as e:
-            print(f"\n  ℹ Reached file boundary after {processed:,} points ({type(e).__name__}). Proceeding with extracted data...")
+            print(f"\n   Reached file boundary after {processed:,} points ({type(e).__name__}). Proceeding with extracted data...")
 
         print()
 
-    print("🔄 Merging & centering coordinate space...")
+    print(" Merging & centering coordinate space...")
     all_x = np.concatenate(sampled_x)
     all_y = np.concatenate(sampled_y)
     all_z = np.concatenate(sampled_z)
@@ -98,7 +98,7 @@ def convert_laz_to_csv(
         all_g = z_norm
         all_b = z_norm
 
-    print(f"💾 Writing {len(all_x):,} points to {output_path}...")
+    print(f" Writing {len(all_x):,} points to {output_path}...")
     df = pd.DataFrame({
         'x': np.round(all_x, 3),
         'y': np.round(all_y, 3),
@@ -108,7 +108,7 @@ def convert_laz_to_csv(
         'b': all_b,
     })
     df.to_csv(output_path, index=False)
-    print(f"✅ Successfully created: {output_path} ({os.path.getsize(output_path) / (1024*1024):.1f} MB, {len(df):,} points)")
+    print(f" Successfully created: {output_path} ({os.path.getsize(output_path) / (1024*1024):.1f} MB, {len(df):,} points)")
     return output_path
 
 

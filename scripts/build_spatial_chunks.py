@@ -75,8 +75,8 @@ def build_spatial_chunks(
     os.makedirs(output_dir, exist_ok=True)
     start_time = time.time()
 
-    print(f"🏛️ Starting IIT Jodhpur Campus Partitioner for {laz_path}...")
-    print(f"📦 Output Directory: {output_dir}")
+    print(f" Starting IIT Jodhpur Campus Partitioner for {laz_path}...")
+    print(f" Output Directory: {output_dir}")
 
     raw_x_list, raw_y_list, raw_z_list = [], [], []
     raw_r_list, raw_g_list, raw_b_list = [], [], []
@@ -111,12 +111,12 @@ def build_spatial_chunks(
                     raw_b_list.append((rb * scale).astype(np.uint8))
 
                 total_read += len(chunk)
-                print(f"  ⏳ Read {total_read:,} raw LiDAR points...", end="\r", flush=True)
+                print(f"   Read {total_read:,} raw LiDAR points...", end="\r", flush=True)
 
         except Exception as e:
-            print(f"\n  ℹ Reached file boundary after {total_read:,} points.")
+            print(f"\n   Reached file boundary after {total_read:,} points.")
 
-    print("\n🔄 Computing campus centering and architectural elevation...")
+    print("\n Computing campus centering and architectural elevation...")
     raw_x = np.concatenate(raw_x_list)
     raw_y = np.concatenate(raw_y_list)
     raw_z = np.concatenate(raw_z_list)
@@ -146,8 +146,8 @@ def build_spatial_chunks(
         raw_b = np.full(len(ursina_x), 160, dtype=np.uint8)
 
     total_dense_points = len(ursina_x)
-    print(f"📊 Cleaned Campus Points: {total_dense_points:,}")
-    print(f"📐 Campus Dimensions: X = [{np.min(ursina_x):.1f}m, {np.max(ursina_x):.1f}m], "
+    print(f" Cleaned Campus Points: {total_dense_points:,}")
+    print(f" Campus Dimensions: X = [{np.min(ursina_x):.1f}m, {np.max(ursina_x):.1f}m], "
           f"Z = [{np.min(ursina_z):.1f}m, {np.max(ursina_z):.1f}m], "
           f"Building Heights = [0.0m, {np.max(ursina_y):.1f}m]")
 
@@ -252,14 +252,14 @@ def build_spatial_chunks(
         elevation=elevation_colors[ov_idx],
         vibrant=true_rgb[ov_idx],
     )
-    print(f"🌍 Saved Overview LOD: {overview_path} ({len(ov_verts):,} points)")
+    print(f" Saved Overview LOD: {overview_path} ({len(ov_verts):,} points)")
 
     # Manifest with IITJ Landmark Waypoints
     landmarks = [
-        {"name": "🏛️ Academic Complex & Lecture Halls", "position": [-45.0, 15.0, 30.0]},
-        {"name": "🏫 Department Buildings & Labs", "position": [-65.0, 15.0, 20.0]},
-        {"name": "🎓 Central Plaza & Courtyard", "position": [0.0, 12.0, -10.0]},
-        {"name": "📍 Campus Main Entrance Avenue", "position": [55.0, 10.0, -35.0]},
+        {"name": " Academic Complex & Lecture Halls", "position": [-45.0, 15.0, 30.0]},
+        {"name": " Department Buildings & Labs", "position": [-65.0, 15.0, 20.0]},
+        {"name": " Central Plaza & Courtyard", "position": [0.0, 12.0, -10.0]},
+        {"name": " Campus Main Entrance Avenue", "position": [55.0, 10.0, -35.0]},
     ]
 
     manifest = {
@@ -284,7 +284,7 @@ def build_spatial_chunks(
         json.dump(manifest, f, indent=2)
 
     elapsed = time.time() - start_time
-    print(f"✅ IIT Jodhpur Architecture Partitioner complete in {elapsed:.1f}s! ({saved_count} chunks)")
+    print(f" IIT Jodhpur Architecture Partitioner complete in {elapsed:.1f}s! ({saved_count} chunks)")
 
 
 if __name__ == "__main__":

@@ -1,16 +1,79 @@
-'''
-Direct .laz / .las LiDAR Point Cloud Loader and Streamer for Hand-AR.\
+"""
+Direct .laz / .las LiDAR Point Cloud Loader and Streamer for Hand-AR.
 
-Provides high-performance, memory‑safe streaming of LASzip (.laz) and LAS (.las)\
-files directly into pandas DataFrames consumable by Ursina ExploreEnvironment.\
-Handles 16‑bit RGB normalization, origin centering, elevation baselining, and caching.\
-'''
+Provides high-performance, memory-safe streaming of LASzip (.laz) and LAS (.las)
+files directly into pandas DataFrames consumable by Ursina ExploreEnvironment.
+Handles 16-bit RGB normalization, origin centering, elevation baselining, and caching.
+"""
 
 import os
+import logging
+from itertools import chain
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+def _warn_if_implausibly_small(path: str, point_count: int, point_size: int) -> None:
+    """Warn when compressed size is far below a conservative lower bound."""
+    file_size = os.path.getsize(path)
+    minimum_expected = point_count * point_size * 0.01
+    if file_size < minimum_expected:
+        logger.warning(
+            "Warning: file size (%s bytes) looks small for %s declared points; "
+            "the file may be truncated. Continuing with full verification...",
+            file_size,
+            f"{point_count:,}",
+        )
+
+
+def _point_size(path: str) -> int:
+    import laspy
+
+    with laspy.open(path) as reader:
+        return reader.header.point_format.size
+
+
+def describe_laz_failure(
+    path: str,
+    points_decoded: int,
+    point_count: int,
+    cause: BaseException,
+    *,
+    chunk_index: Optional[int] = None,
+    point_offset: Optional[int] = None,
+) -> str:
+    """Return a consistent diagnostic for an incomplete LAS/LAZ decode."""
+    location = f"chunk {chunk_index}, point offset {point_offset:,}" if chunk_index is not None else (
+        f"point offset {points_decoded:,}"
+    )
+    return (
+        f"Could not read the complete LiDAR file {path!r}: decoding stopped at "
+        f"{location}. Successfully decoded {points_decoded:,} of the expected "
+        f"{point_count:,} points. Original error: {type(cause).__name__}: {cause}"
+    )
+
+
+def iter_laz_chunks(
+    laz_path: str,
+    chunk_size: int = 500_000,
+) -> Iterator[tuple[int, int, object, int, bool]]:
+    """Yield decoded chunks with their global offsets and source metadata."""
+    import laspy
+
+    with laspy.open(laz_path) as reader:
+        point_count = reader.header.point_count
+        has_color = (
+            hasattr(reader.header.point_format, "red")
+            or "red" in reader.header.point_format.dimension_names
+        )
+        point_offset = 0
+        for chunk_index, chunk in enumerate(reader.chunk_iterator(chunk_size)):
+            yield chunk_index, point_offset, chunk, point_count, has_color
+            point_offset += len(chunk)
 
 
 def load_laz_to_dataframe(
@@ -19,164 +82,199 @@ def load_laz_to_dataframe(
     chunk_size: int = 500_000,
     auto_center: bool = True,
     use_cache: bool = True,
+    allow_partial: bool = False,
 ) -> pd.DataFrame:
-    """Load a .laz/.las file into a pandas DataFrame.
-
-    The function streams the point cloud, optionally subsamples to `target_points`,
-    normalizes RGB values, centers the geometry, and caches the result using a
-    compact NPZ file for fast subsequent loads.
+    """
+    Directly reads a .laz or .las LiDAR file and returns a centered, normalized
+    pandas DataFrame with columns ['x', 'y', 'z', 'r', 'g', 'b'].
 
     Args:
-        laz_path: Path to the .laz or .las file.
-        target_points: Desired number of output points. Use -1 to load all points.
-        chunk_size: Number of points read per streaming chunk (helps limit RAM usage).
-        auto_center: If True, recenters X/Y around zero and baselines Z near the 10th percentile.
-        use_cache: Enable NPZ caching of the processed point cloud.
+        laz_path:      Path to the .laz or .las file.
+        target_points: Target number of output points.
+                       Set to -1 to load all points without subsampling.
+        chunk_size:    Chunk size for streaming decompression to minimize RAM spikes.
+        auto_center:   Center X/Z around (0,0) and baseline Z near 0 to avoid GPU float jitter.
+        use_cache:     Cache downsampled result as Parquet for instant subsequent loads.
+        allow_partial:   Opt in to returning decoded data if the source ends early.
 
     Returns:
-        pd.DataFrame with columns ['x', 'y', 'z', 'r', 'g', 'b'].
+        pd.DataFrame with columns 'x', 'y', 'z', 'r', 'g', 'b'.
     """
     if not os.path.exists(laz_path):
         raise FileNotFoundError(f"LiDAR file not found: {laz_path}")
 
-    # ------------------- Cache lookup (NPZ) -------------------
+    # -- Cache check --
     cache_path: Optional[Path] = None
     if use_cache:
-        cache_name = f"{Path(laz_path).stem}_{target_points}pts_cache.npz"
+        source = os.stat(laz_path)
+        identity = f"{source.st_size}_{source.st_mtime_ns}"
+        file_hash_name = Path(laz_path).stem + f"_{target_points}pts_{identity}_cache.parquet"
         cache_dir = Path(laz_path).parent / "cache"
-        if not cache_dir.is_dir():
-            # Fallback to project‑wide cache directory
-            cache_dir = Path(__file__).resolve().parent.parent.parent / "models_compressed"
         try:
             cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_path = cache_dir / cache_name
-            if (cache_path.exists() and
-                os.path.getmtime(str(cache_path)) >= os.path.getmtime(laz_path)):
-                print(f"⚡ Loading cached point cloud: {cache_path}…")
-                npz = np.load(str(cache_path))
-                return pd.DataFrame({
-                    "x": npz["x"],
-                    "y": npz["y"],
-                    "z": npz["z"],
-                    "r": npz["r"],
-                    "g": npz["g"],
-                    "b": npz["b"],
-                })
-        except Exception:
-            # If anything goes wrong, fall back to fresh loading
-            cache_path = None
+            cache_path = cache_dir / file_hash_name
 
-    # ------------------- LAS/LAZ reading -------------------
+            if (cache_path.exists()
+                    and os.path.getmtime(str(cache_path)) >= os.path.getmtime(laz_path)):
+                print(f" Loading cached point cloud: {cache_path}...")
+                return pd.read_parquet(str(cache_path))
+        except OSError:
+            cache_dir = Path(__file__).resolve().parent.parent.parent / "models_compressed"
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_path = cache_dir / file_hash_name
+            except OSError:
+                cache_path = None
+
     try:
         import laspy
-    except ImportError as e:
+    except ImportError:
         raise ImportError(
-            "laspy with lazrs is required to read .laz/.las files.\n"
-            "Install with: pip install 'laspy[lazrs]'"
-        ) from e
+            "laspy with lazrs is required to read .laz/.las files directly.\n"
+            "Please run:  pip install 'laspy[lazrs]'"
+        )
 
-    print(f"📦 Streaming LiDAR point cloud from: {laz_path}…")
+    print(f" Streaming LiDAR point cloud from: {laz_path}...")
 
-    with laspy.open(laz_path) as reader:
-        header_points = reader.header.point_count
-        # ------------------- Point count bounding -------------------
-        if header_points > 25_000_000:
-            total_points = min(header_points, 20_500_000)
+    total_points = None
+    read_count = 0
+    chunk_index = 0
+    point_offset = 0
+    partial = False
+    try:
+        chunks = iter_laz_chunks(laz_path, chunk_size)
+        first_chunk = next(chunks, None)
+        if first_chunk is None:
+            raise RuntimeError(f"LiDAR file contains no readable points: {laz_path}")
+        chunk_index, point_offset, chunk, total_points, has_color = first_chunk
+        try:
+            _warn_if_implausibly_small(laz_path, total_points, _point_size(laz_path))
+        except OSError:
+            pass
+        sample_count = target_points if target_points > 0 else total_points
+        sample_count = min(sample_count, total_points)
+        if sample_count < total_points:
+            rng = np.random.default_rng(0)
+            sample_indices = np.sort(
+                rng.choice(total_points, sample_count, replace=False)
+            )
+            print(
+                f" Sampling {sample_count:,} points across the complete "
+                f"{total_points:,}-point file for real-time FPS..."
+            )
         else:
-            total_points = header_points
-
-        # ------------------- Sub‑sampling logic -------------------
-        if target_points > 0 and total_points > target_points:
-            step = max(1, total_points // target_points)
-            print(f"🎯 Subsampling ~{target_points:,} points (1 in {step}) for real‑time FPS…")
-        else:
-            step = 1
-            print(f"🎯 Loading all {total_points:,} points…")
+            sample_indices = np.arange(total_points)
+            print(f" Loading all {total_points:,} points...")
 
         xs, ys, zs = [], [], []
         rs, gs, bs = [], [], []
 
-        has_color = (
-            hasattr(reader.header.point_format, 'red') or
-            'red' in getattr(reader.header.point_format, 'dimension_names', [])
-        )
+        # One streaming pass both validates every compressed block and collects the sample.
+        for chunk_index, point_offset, chunk, _, _ in chain((first_chunk,), chunks):
+            end = point_offset + len(chunk)
+            selected = sample_indices[
+                (sample_indices >= point_offset) & (sample_indices < end)
+            ] - point_offset
+            if len(selected):
+                xs.append(np.asarray(chunk.x)[selected].astype(np.float32))
+                ys.append(np.asarray(chunk.y)[selected].astype(np.float32))
+                zs.append(np.asarray(chunk.z)[selected].astype(np.float32))
 
-        read_count = 0
-        try:
-            for chunk in reader.chunk_iterator(chunk_size):
-                xs.append(np.array(chunk.x[::step], dtype=np.float32))
-                ys.append(np.array(chunk.y[::step], dtype=np.float32))
-                zs.append(np.array(chunk.z[::step], dtype=np.float32))
+                if has_color and hasattr(chunk, "red"):
+                    rs.append(np.asarray(chunk.red)[selected])
+                    gs.append(np.asarray(chunk.green)[selected])
+                    bs.append(np.asarray(chunk.blue)[selected])
 
-                if has_color and hasattr(chunk, 'red') and len(chunk.red) > 0:
-                    rr = np.array(chunk.red[::step], dtype=np.float32)
-                    rg = np.array(chunk.green[::step], dtype=np.float32)
-                    rb = np.array(chunk.blue[::step], dtype=np.float32)
-                    # 16‑bit to 8‑bit conversion, preserving dynamic range
-                    max_val = max(float(np.max(rr)), float(np.max(rg)), float(np.max(rb)), 1.0)
-                    scale = 255.0 / 65535.0 if max_val > 255 else 1.0
-                    rs.append((rr * scale).astype(np.uint8))
-                    gs.append((rg * scale).astype(np.uint8))
-                    bs.append((rb * scale).astype(np.uint8))
+            read_count = end
+            print(
+                f"   Read {read_count:,} / {total_points:,} points...",
+                end="\r",
+                flush=True,
+            )
+        if read_count != total_points:
+            raise RuntimeError(
+                f"LiDAR stream ended at {read_count:,} of {total_points:,} points"
+            )
+    except Exception as e:
+        if allow_partial and read_count and xs:
+            print(
+                f"\n  PARTIAL DATASET: loaded {read_count:,} of "
+                f"{total_points:,} points; caching disabled."
+            )
+            partial = True
+        else:
+            partial = False
+        if partial:
+            pass
+        elif isinstance(e, RuntimeError) and str(e).startswith("Could not read"):
+            raise
+        else:
+            raise RuntimeError(
+                describe_laz_failure(
+                    laz_path,
+                    read_count,
+                    total_points or 0,
+                    e,
+                    point_offset=read_count,
+                )
+            ) from e
 
-                read_count += len(chunk)
-                print(f"  ⏳ Read {read_count:,} / {total_points:,} points…", end="\r", flush=True)
-        except Exception as e:
-            print(f"\n  ℹ Stream boundary: {type(e).__name__}. Proceeding with collected data…")
-        print()
+    print()
 
-    # ------------------- Assemble arrays -------------------
     all_x = np.concatenate(xs)
     all_y = np.concatenate(ys)
     all_z = np.concatenate(zs)
 
-    # Filter extreme noise: keep points within [ground‑5 m, ground+80 m] elevation
+    # Filter extreme noise: keep points within [ground - 5m, ground + 80m] elevation
     z_baseline = float(np.percentile(all_z, 5))
     valid_mask = (all_z >= z_baseline - 5.0) & (all_z <= z_baseline + 80.0)
     all_x = all_x[valid_mask]
     all_y = all_y[valid_mask]
     all_z = all_z[valid_mask]
 
+    # Determine colors
     if rs:
-        all_r = np.concatenate(rs)[valid_mask]
-        all_g = np.concatenate(gs)[valid_mask]
-        all_b = np.concatenate(bs)[valid_mask]
+        all_r = np.concatenate(rs).astype(np.float32)
+        all_g = np.concatenate(gs).astype(np.float32)
+        all_b = np.concatenate(bs).astype(np.float32)
+        max_val = max(float(np.max(all_r)), float(np.max(all_g)), float(np.max(all_b)), 1.0)
+        scale = 255.0 / 65535.0 if max_val > 255 else 1.0
+        all_r = (all_r * scale).astype(np.uint8)[valid_mask]
+        all_g = (all_g * scale).astype(np.uint8)[valid_mask]
+        all_b = (all_b * scale).astype(np.uint8)[valid_mask]
     else:
-        # Default warm sandstone colour when RGB is absent
+        # Default warm sandstone color when RGB is absent in the scan
         all_r = np.full(len(all_x), 210, dtype=np.uint8)
         all_g = np.full(len(all_x), 190, dtype=np.uint8)
         all_b = np.full(len(all_x), 160, dtype=np.uint8)
 
-    # ------------------- Centering -------------------
+    # Center coordinates around the dataset origin
     if auto_center:
         all_x = all_x - float(np.mean(all_x))
         all_y = all_y - float(np.mean(all_y))
         all_z = all_z - float(np.percentile(all_z, 10))
 
     df = pd.DataFrame({
-        "x": np.round(all_x, 3),
-        "y": np.round(all_y, 3),
-        "z": np.round(all_z, 3),
-        "r": all_r,
-        "g": all_g,
-        "b": all_b,
+        'x': np.round(all_x, 3),
+        'y': np.round(all_y, 3),
+        'z': np.round(all_z, 3),
+        'r': all_r,
+        'g': all_g,
+        'b': all_b,
     })
+    if partial:
+        df.attrs["is_partial"] = True
+        df.attrs["points_decoded"] = read_count
+        df.attrs["point_count"] = total_points
 
-    print(f"✅ Extracted {len(df):,} LiDAR points!")
+    print(f" Extracted {len(df):,} LiDAR points!")
 
-    # ------------------- Cache write (NPZ) -------------------
-    if use_cache and cache_path is not None:
+    # Cache to Parquet for instant reload next run
+    if use_cache and cache_path is not None and not partial:
         try:
-            np.savez_compressed(str(cache_path),
-                x=df["x"].values,
-                y=df["y"].values,
-                z=df["z"].values,
-                r=df["r"].values,
-                g=df["g"].values,
-                b=df["b"].values,
-            )
-            print(f"💾 Cached at: {cache_path}")
+            df.to_parquet(str(cache_path), index=False)
+            print(f" Cached at: {cache_path}")
         except Exception as e:
-            print(f"⚠ Failed to write cache: {e}")
+            print(f"  Cache write failed ({type(e).__name__}: {e}); continuing without cache.")
 
     return df
