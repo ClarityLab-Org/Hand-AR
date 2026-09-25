@@ -71,27 +71,27 @@ git clone https://github.com/your-username/Hand-ArM2.git
 cd Hand-ArM2
 ```
 
-### Step 2 — Create a virtual environment
+### Step 2 — Create the project environment
+
+**Recommended (Linux/macOS):**
+
+```bash
+./scripts/setup.sh
+source venv/bin/activate
+```
 
 **Windows:**
 
 ```bash
-py -3.10 -m venv handtrack_env
-handtrack_env\Scripts\activate
-```
-
-**macOS / Linux:**
-
-```bash
-python3.10 -m venv handtrack_env
-source handtrack_env/bin/activate
+py -3.10 -m venv venv
+venv\Scripts\activate
+python -m pip install -r requirements.txt
 ```
 
 ### Step 3 — Install dependencies
 
 ```bash
-py -3.10 -m pip install --upgrade pip
-py -3.10 -m pip install -r requirements.txt
+venv/bin/python -m pip install -r requirements.txt
 ```
 
 ---

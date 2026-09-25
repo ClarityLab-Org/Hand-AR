@@ -27,19 +27,19 @@ cd Hand-AR
 
 ```bash
 # On Linux/macOS
-python3 -m venv handtrack_env
-source handtrack_env/bin/activate
+./scripts/setup.sh
+source venv/bin/activate
 
 # On Windows
-python -m venv handtrack_env
-handtrack_env\Scripts\activate
+py -3.10 -m venv venv
+venv\Scripts\activate
+python -m pip install -r requirements.txt
 ```
 
 ### 3. Install Dependencies
 
 ```bash
-pip install --upgrade pip
-pip install -r requirements.txt
+venv/bin/python -m pip install -r requirements.txt
 ```
 
 **Note**: The first installation may take 10-15 minutes due to large ML models being downloaded.
@@ -47,7 +47,7 @@ pip install -r requirements.txt
 ### 4. Verify Installation
 
 ```bash
-python3 -c "import cv2, mediapipe, ursina, panda3d; print('✓ All dependencies installed successfully')"
+venv/bin/python -c "import cv2, mediapipe, ursina, panda3d; print('✓ All dependencies installed successfully')"
 ```
 
 ## Running the Application
@@ -55,7 +55,7 @@ python3 -c "import cv2, mediapipe, ursina, panda3d; print('✓ All dependencies 
 ### Launch GUI Menu (Recommended)
 
 ```bash
-python3 opening.py
+venv/bin/python opening.py
 ```
 
 This opens a user-friendly interface to select 3D models.
@@ -63,13 +63,13 @@ This opens a user-friendly interface to select 3D models.
 ### Launch with Default Model
 
 ```bash
-python3 trial2.py
+venv/bin/python trial2.py
 ```
 
 ### Launch with Custom Model
 
 ```bash
-python3 trial2.py path/to/your/model.glb
+venv/bin/python trial2.py path/to/your/model.glb
 ```
 
 **Supported formats**: `.glb`, `.obj`, `.gltf`, `.x`, `.egg` (Panda3D compatible formats)
@@ -80,7 +80,7 @@ python3 trial2.py path/to/your/model.glb
 
 ```bash
 # Ensure virtual environment is activated
-pip install -r requirements.txt
+venv/bin/python -m pip install -r requirements.txt
 ```
 
 ### "Could not open camera"
@@ -127,7 +127,7 @@ Hand-AR/
 ├── models/                # 3D model files (.glb, .obj, etc.)
 ├── screenshots/           # Captured screenshots
 ├── requirements.txt       # Python dependencies
-└── handtrack_env/         # Virtual environment (auto-created)
+└── venv/                  # Virtual environment (created by scripts/setup.sh)
 ```
 
 ## Controls
@@ -154,7 +154,7 @@ Hand-AR/
 If you add new packages, update `requirements.txt`:
 
 ```bash
-pip freeze > requirements.txt
+venv/bin/python -m pip freeze > requirements.txt
 ```
 
 ### Environment Variables
