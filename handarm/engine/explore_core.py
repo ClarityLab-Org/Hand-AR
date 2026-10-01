@@ -130,13 +130,27 @@ class ExploreEnvironment:
         self.color_mode_idx = 0
 
         # Check if spatial chunks directory exists
-        chunks_dir = target_path
-        if not (os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))):
-            default_chunks_dir = os.path.join(os.path.dirname(target_path), "iitj_chunks")
-            if os.path.exists(os.path.join(default_chunks_dir, "manifest.json")):
-                chunks_dir = default_chunks_dir
+        chunks_dir = target_path if isinstance(target_path, str) else ""
+        if not (chunks_dir and os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))):
+            candidates = []
+            if isinstance(target_path, str):
+                candidates.extend([
+                    os.path.join(os.path.dirname(target_path), "iitj_chunks"),
+                    os.path.join(os.path.dirname(target_path), "chunks"),
+                    os.path.join(os.path.dirname(target_path), f"{Path(target_path).stem}_chunks"),
+                ])
+            candidates.extend([
+                os.path.join("models", "iitj_chunks"),
+                os.path.abspath("models/iitj_chunks"),
+            ])
+            for candidate in candidates:
+                if os.path.isdir(candidate) and os.path.exists(os.path.join(candidate, "manifest.json")):
+                    has_chunks = any(f.endswith(".npz") and f != "overview.npz" for f in os.listdir(candidate))
+                    if has_chunks:
+                        chunks_dir = candidate
+                        break
 
-        self.is_chunked = os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))
+        self.is_chunked = isinstance(chunks_dir, str) and os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))
         self.chunks_dir = chunks_dir
 
         # Atmosphere & fog depth
@@ -202,6 +216,49 @@ class ExploreEnvironment:
             df = auto_align_up_axis(df)
             self._load_single_point_cloud(df)
 
+        # Player controller setup
+        self.player = FirstPersonController()
+        self.player.gravity = 0
+        self.player.speed = 0
+        self.player.mouse_sensitivity = Vec2(0, 0)
+
+        # Spawn tracking
+        self.spawn_position: Optional[Vec3] = None
+        self.spawn_rotation: Optional[Vec3] = None
+        self.spawn_initialized: bool = False
+
+        if self.is_chunked and "manifest_data" in locals() and "spawn_point" in manifest_data:
+            sp = manifest_data["spawn_point"]
+            sr = manifest_data.get("spawn_rotation", [28.0, -45.0, 0.0])
+            self.player.position = Vec3(sp[0], sp[1], sp[2])
+            self.player.rotation_x = sr[0]
+            self.player.rotation_y = sr[1]
+            self.player.rotation_z = sr[2]
+            self.spawn_position = Vec3(self.player.position)
+            self.spawn_rotation = Vec3(self.player.rotation_x, self.player.rotation_y, self.player.rotation_z)
+            self.spawn_initialized = True
+
+        self.player.prev_x = self.player.x
+        self.player.prev_z = self.player.z
+
+        # Flight & Cooldowns
+        self.is_flying: bool = True if self.is_chunked else False
+        self.flight_toggle_cooldown: float = 4
+        self.reset_cooldown: float = 0
+        self.reset_cooldown_duration: float = reset_cooldown_duration
+
+        # Navigation Speeds
+        self.walk_speed: float = 6.0
+        self.flight_speed: float = 16.0
+        self.vertical_speed: float = 8.0
+
+        # Stream update throttle
+        self.last_stream_time: float = 0.0
+
+        # Initial stream tick around origin
+        if self.is_chunked:
+            self._update_chunk_streaming(self.player.x, self.player.z)
+
     def _load_single_point_cloud(self, df: pd.DataFrame) -> None:
         """Builds the single-file point-cloud mesh and navigation bounds."""
         self.points_xz = np.array([df["x"], df["z"]]).T
@@ -232,37 +289,6 @@ class ExploreEnvironment:
         self.single_entity = Entity(model=self.single_mesh)
         self.single_entity.set_render_mode_perspective(False)
         self.single_entity.set_render_mode_thickness(self.current_thickness)
-
-        # Player controller setup
-        self.player = FirstPersonController()
-        self.player.gravity = 0
-        self.player.speed = 0
-        self.player.mouse_sensitivity = Vec2(0, 0)
-        self.player.prev_x = self.player.x
-        self.player.prev_z = self.player.z
-
-        # Spawn tracking
-        self.spawn_position: Optional[Vec3] = None
-        self.spawn_rotation: Optional[Vec3] = None
-        self.spawn_initialized: bool = False
-
-        # Flight & Cooldowns
-        self.is_flying: bool = False
-        self.flight_toggle_cooldown: float = 4
-        self.reset_cooldown: float = 0
-        self.reset_cooldown_duration: float = reset_cooldown_duration
-
-        # Navigation Speeds
-        self.walk_speed: float = 6.0
-        self.flight_speed: float = 16.0
-        self.vertical_speed: float = 8.0
-
-        # Stream update throttle
-        self.last_stream_time: float = 0.0
-
-        # Initial stream tick around origin
-        if self.is_chunked:
-            self._update_chunk_streaming(self.player.x, self.player.z)
 
     def _update_chunk_streaming(self, px: float, pz: float) -> None:
         """Loads nearby chunks and evicts distant chunks dynamically."""

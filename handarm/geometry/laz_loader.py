@@ -83,6 +83,7 @@ def load_laz_to_dataframe(
     auto_center: bool = True,
     use_cache: bool = True,
     allow_partial: bool = False,
+    max_points: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Directly reads a .laz or .las LiDAR file and returns a centered, normalized
@@ -95,7 +96,8 @@ def load_laz_to_dataframe(
         chunk_size:    Chunk size for streaming decompression to minimize RAM spikes.
         auto_center:   Center X/Z around (0,0) and baseline Z near 0 to avoid GPU float jitter.
         use_cache:     Cache downsampled result as Parquet for instant subsequent loads.
-        allow_partial:   Opt in to returning decoded data if the source ends early.
+        allow_partial: Opt in to returning decoded data if the source ends early.
+        max_points:    Maximum number of points to read/stream before stopping.
 
     Returns:
         pd.DataFrame with columns 'x', 'y', 'z', 'r', 'g', 'b'.
@@ -108,7 +110,8 @@ def load_laz_to_dataframe(
     if use_cache:
         source = os.stat(laz_path)
         identity = f"{source.st_size}_{source.st_mtime_ns}"
-        file_hash_name = Path(laz_path).stem + f"_{target_points}pts_{identity}_cache.parquet"
+        limit_suffix = f"_max{max_points}" if max_points else ""
+        file_hash_name = Path(laz_path).stem + f"_{target_points}pts{limit_suffix}_{identity}_cache.parquet"
         cache_dir = Path(laz_path).parent / "cache"
         try:
             cache_dir.mkdir(parents=True, exist_ok=True)
@@ -151,27 +154,39 @@ def load_laz_to_dataframe(
             _warn_if_implausibly_small(laz_path, total_points, _point_size(laz_path))
         except OSError:
             pass
-        sample_count = target_points if target_points > 0 else total_points
-        sample_count = min(sample_count, total_points)
-        if sample_count < total_points:
+        limit_points = min(total_points, max_points) if (max_points is not None and max_points > 0) else total_points
+        sample_count = target_points if target_points > 0 else limit_points
+        sample_count = min(sample_count, limit_points)
+        if sample_count < limit_points:
             rng = np.random.default_rng(0)
             sample_indices = np.sort(
-                rng.choice(total_points, sample_count, replace=False)
+                rng.choice(limit_points, sample_count, replace=False)
             )
             print(
-                f" Sampling {sample_count:,} points across the complete "
+                f" Sampling {sample_count:,} points across {limit_points:,} "
+                f"points (capped from {total_points:,} points)..."
+                if limit_points < total_points
+                else f" Sampling {sample_count:,} points across the complete "
                 f"{total_points:,}-point file for real-time FPS..."
             )
         else:
-            sample_indices = np.arange(total_points)
-            print(f" Loading all {total_points:,} points...")
+            sample_indices = np.arange(limit_points)
+            print(
+                f" Loading {limit_points:,} points (stopped at limit from {total_points:,})..."
+                if limit_points < total_points
+                else f" Loading all {total_points:,} points..."
+            )
 
         xs, ys, zs = [], [], []
         rs, gs, bs = [], [], []
 
         # One streaming pass both validates every compressed block and collects the sample.
         for chunk_index, point_offset, chunk, _, _ in chain((first_chunk,), chunks):
-            end = point_offset + len(chunk)
+            if point_offset >= limit_points:
+                break
+
+            chunk_len = len(chunk)
+            end = min(point_offset + chunk_len, limit_points)
             selected = sample_indices[
                 (sample_indices >= point_offset) & (sample_indices < end)
             ] - point_offset
@@ -187,24 +202,28 @@ def load_laz_to_dataframe(
 
             read_count = end
             print(
-                f"   Read {read_count:,} / {total_points:,} points...",
+                f"   Read {read_count:,} / {limit_points:,} points...",
                 end="\r",
                 flush=True,
             )
-        if read_count != total_points:
+            if read_count >= limit_points:
+                break
+        if read_count != limit_points:
             raise RuntimeError(
-                f"LiDAR stream ended at {read_count:,} of {total_points:,} points"
+                f"LiDAR stream ended at {read_count:,} of {limit_points:,} points"
             )
     except Exception as e:
-        if allow_partial and read_count and xs:
+        if max_points is not None and read_count >= limit_points and xs:
+            partial = False
+        elif allow_partial and read_count and xs:
             print(
                 f"\n  PARTIAL DATASET: loaded {read_count:,} of "
-                f"{total_points:,} points; caching disabled."
+                f"{limit_points:,} points; caching disabled."
             )
             partial = True
         else:
             partial = False
-        if partial:
+        if partial or (max_points is not None and read_count >= limit_points and xs):
             pass
         elif isinstance(e, RuntimeError) and str(e).startswith("Could not read"):
             raise
@@ -213,7 +232,7 @@ def load_laz_to_dataframe(
                 describe_laz_failure(
                     laz_path,
                     read_count,
-                    total_points or 0,
+                    limit_points if ("limit_points" in locals() and limit_points is not None) else (total_points or 0),
                     e,
                     point_offset=read_count,
                 )

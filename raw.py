@@ -2,7 +2,7 @@ import pandas as pd
 import open3d as o3d
 import numpy as np
 
-df = pd.read_csv("models/iitj_campus.csv")
+df = pd.read_csv("pointcloud_sample.csv")
 
 pcd = o3d.geometry.PointCloud()
 pcd.points = o3d.utility.Vector3dVector(df[["x", "y", "z"]].values)

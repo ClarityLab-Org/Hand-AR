@@ -24,7 +24,7 @@
   },
   "landmarks": [
     {
-      "name": "\ud83c\udfdb\ufe0f Academic Complex & Lecture Halls",
+      "name": " Academic Complex & Lecture Halls",
       "position": [
         -45.0,
         15.0,
@@ -32,7 +32,7 @@
       ]
     },
     {
-      "name": "\ud83c\udfeb Department Buildings & Labs",
+      "name": " Department Buildings & Labs",
       "position": [
         -65.0,
         15.0,
@@ -40,7 +40,7 @@
       ]
     },
     {
-      "name": "\ud83c\udf93 Central Plaza & Courtyard",
+      "name": " Central Plaza & Courtyard",
       "position": [
         0.0,
         12.0,
@@ -48,7 +48,7 @@
       ]
     },
     {
-      "name": "\ud83d\udccd Campus Main Entrance Avenue",
+      "name": " Campus Main Entrance Avenue",
       "position": [
         55.0,
         10.0,

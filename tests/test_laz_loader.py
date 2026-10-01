@@ -117,3 +117,24 @@ def test_allow_partial_returns_marked_data_without_cache(tmp_path):
     assert frame.attrs["is_partial"] is True
     assert frame.attrs["points_decoded"] == 90
     assert not list((tmp_path / "cache").glob("*.parquet"))
+
+
+def test_max_points_stops_reading_at_limit(tmp_path):
+    path = tmp_path / "sample.las"
+    _write_las(path, 100)
+
+    # When max_points=35 and chunk_size=10, it should stop taking points once 35 points are read
+    frame = load_laz_to_dataframe(
+        str(path),
+        target_points=35,
+        max_points=35,
+        chunk_size=10,
+        use_cache=False,
+    )
+    assert len(frame) == 35
+
+
+def test_explore_laz_max_points_constant():
+    import explore_laz
+    assert hasattr(explore_laz, "MAX_POINTS")
+    assert explore_laz.MAX_POINTS == 20_499_455

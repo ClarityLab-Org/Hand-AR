@@ -25,15 +25,18 @@ import argparse
 import os
 import sys
 
+# Fixed maximum limit: render only 20,499,455 points and stop taking further points
+MAX_POINTS = 20_499_455
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Direct LAZ/LAS LiDAR Point Cloud Explorer for Hand-AR",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog=f"""
 Examples:
     python explore_laz.py campus.laz
-    python explore_laz.py /path/to/college_campus.laz --points 800000
+    python explore_laz.py /path/to/college_campus.laz --points {MAX_POINTS}
     python explore_laz.py campus.laz --no-cache
         """
     )
@@ -46,9 +49,16 @@ Examples:
     parser.add_argument(
         "--points",
         type=int,
-        default=500_000,
+        default=MAX_POINTS,
         metavar="N",
-        help="Target number of points to stream (default: 500,000 for smooth 60 FPS)"
+        help=f"Target number of points to render (default: {MAX_POINTS:,}, capped at {MAX_POINTS:,})"
+    )
+    parser.add_argument(
+        "--max-points",
+        type=int,
+        default=MAX_POINTS,
+        metavar="N",
+        help=f"Maximum points to read from LiDAR file before stopping (default: {MAX_POINTS:,})"
     )
     parser.add_argument(
         "--no-cache",
@@ -63,6 +73,11 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    # Enforce strict point cap: only render up to MAX_POINTS (20,499,455)
+    # and stop taking further points after reaching this threshold
+    target_points = min(args.points, MAX_POINTS) if args.points > 0 else MAX_POINTS
+    max_points = min(args.max_points, MAX_POINTS) if args.max_points > 0 else MAX_POINTS
 
     # Find candidate file if none provided
     laz_path = args.laz_path
@@ -105,7 +120,8 @@ Examples:
     print("=" * 65)
     print("  Hand-AR Direct LAZ/LAS LiDAR Explorer")
     print(f" Input File:     {laz_path}")
-    print(f" Target Density: {args.points:,} points")
+    print(f" Target Density: {target_points:,} points (capped at {MAX_POINTS:,})")
+    print(f" Stop Limit:     {max_points:,} points (stops reading further points beyond this)")
     print(f" Caching:        {'Disabled' if args.no_cache else 'Enabled'}")
     if args.allow_partial:
         print("  PARTIAL MODE ENABLED: incomplete data may be displayed")
@@ -115,11 +131,18 @@ Examples:
     from handarm.geometry.laz_loader import load_laz_to_dataframe
     df = load_laz_to_dataframe(
         laz_path,
-        target_points=args.points,
+        target_points=target_points,
+        max_points=max_points,
         auto_center=True,
         use_cache=not args.no_cache,
         allow_partial=args.allow_partial,
     )
+
+    # Strictly guarantee that no more than MAX_POINTS points are rendered
+    if len(df) > MAX_POINTS:
+        df = df.iloc[:MAX_POINTS]
+
+    print(f" Rendering {len(df):,} points in Hand-AR Explorer...")
 
     from handarm.engine.explore_standalone import main as explore_main
     explore_main(df)
