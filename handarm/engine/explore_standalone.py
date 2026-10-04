@@ -33,16 +33,14 @@ from handarm.tracking.gestures import (
 from handarm.tracking.hand_tracker import HandTracker
 
 
-def main(point_cloud: Optional[pd.DataFrame] = None) -> None:
+def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] = None) -> None:
     """Main entry point for standalone explore mode."""
 
     # File loading
-    csv_path = "pointcloud_sample.csv"
-    if len(sys.argv) > 1:
-        csv_path = sys.argv[1]
+    target = target_path or (sys.argv[1] if len(sys.argv) > 1 else "pointcloud_sample.csv")
 
-    if point_cloud is None and not os.path.exists(csv_path):
-        print(f"ERROR: Model file not found: {csv_path}")
+    if point_cloud is None and not os.path.exists(target):
+        print(f"ERROR: Model or chunks not found: {target}")
         sys.exit(1)
 
     # -----------------------------------------------------------------------
@@ -145,14 +143,15 @@ def main(point_cloud: Optional[pd.DataFrame] = None) -> None:
         origin=(-0.5, 0.5), scale=0.8, background=True,
     )
     # Point cloud environment (standalone: ::6 downsample, thickness 4, no reset cooldown)
-    print("Loading Point Cloud Environment...")
+    print(f"Loading Point Cloud Environment from {target}...")
     env = ExploreEnvironment(
-        csv_path,
+        target,
         point_cloud=point_cloud,
         downsample_step=1,
         point_thickness=1.0,
         reset_cooldown_duration=0.0,
     )
+
 
     right_status = Text(text="Right: Not Detected", position=(0.3, -0.30),
                         scale=1.1, color=color.orange)
@@ -203,8 +202,16 @@ def main(point_cloud: Optional[pd.DataFrame] = None) -> None:
         flight_status.color = color.red if env.is_flying else color.green
 
         if env.is_chunked:
-            pts_count = sum(len(c.vertices) for c in env.loaded_chunks.values())
-            chunk_status.text = f"Streamed: {len(env.loaded_chunks)} chunks ({pts_count/1e6:.1f}M pts)"
+            pts_count = sum(c.vertex_count for c in env.loaded_chunks.values())
+            # Count chunks at each LOD level
+            lod_counts = [0, 0, 0]
+            for c in env.loaded_chunks.values():
+                if c.lod_level < 3:
+                    lod_counts[c.lod_level] += 1
+            chunk_status.text = (
+                f"Streamed: {len(env.loaded_chunks)} chunks ({pts_count/1e6:.2f}M pts) "
+                f"LOD: {lod_counts[0]}hi {lod_counts[1]}med {lod_counts[2]}lo"
+            )
 
     # -----------------------------------------------------------------------
     # Input handler

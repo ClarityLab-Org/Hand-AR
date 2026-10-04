@@ -112,9 +112,12 @@ def build_spatial_chunks(
 
                 total_read += len(chunk)
                 print(f"   Read {total_read:,} raw LiDAR points...", end="\r", flush=True)
+                if total_read >= 20_500_000:
+                    print(f"\n   Reached partition threshold ({total_read:,} points).")
+                    break
 
         except Exception as e:
-            print(f"\n   Reached file boundary after {total_read:,} points.")
+            print(f"\n   Reached file boundary after {total_read:,} points ({e}).")
 
     print("\n Computing campus centering and architectural elevation...")
     raw_x = np.concatenate(raw_x_list)

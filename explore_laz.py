@@ -24,6 +24,7 @@ Controls:
 import argparse
 import os
 import sys
+from pathlib import Path
 
 # Fixed maximum limit: render only 20,499,455 points and stop taking further points
 MAX_POINTS = 20_499_455
@@ -65,6 +66,12 @@ Examples:
         action="store_true",
         default=False,
         help="Disable Parquet caching of downsampled points"
+    )
+    parser.add_argument(
+        "--single-mesh",
+        action="store_true",
+        default=False,
+        help="Force loading all points as a single monolithic mesh (legacy mode, slower)"
     )
     parser.add_argument(
         "--allow-partial",
@@ -117,17 +124,58 @@ Examples:
         print("   Please install it with: pip install 'laspy[lazrs]'")
         sys.exit(1)
 
+    # Determine if pre-partitioned dynamic spatial chunks exist
+    chunks_dir = None
+    if not args.single_mesh:
+        candidate_chunk_dirs = [
+            os.path.join("models", "iitj_chunks"),
+            os.path.join(os.path.dirname(laz_path), f"{Path(laz_path).stem}_chunks"),
+            os.path.join("models", f"{Path(laz_path).stem}_chunks"),
+            os.path.join(os.path.dirname(laz_path), "chunks"),
+        ]
+        for cdir in candidate_chunk_dirs:
+            if os.path.isdir(cdir) and os.path.exists(os.path.join(cdir, "manifest.json")):
+                has_npz = any(f.endswith(".npz") and f != "overview.npz" for f in os.listdir(cdir))
+                if has_npz:
+                    chunks_dir = cdir
+                    break
+
+        if chunks_dir is None:
+            # Auto-generate dynamic spatial chunks for instant subsequent launches and smooth 60 FPS
+            print("=" * 65)
+            print("  Building Dynamic Spatial Chunks for Smooth 60 FPS Streaming...")
+            print(f" Source:  {laz_path}")
+            target_chunks_dir = os.path.join("models", f"{Path(laz_path).stem}_chunks")
+            if "iitj" in laz_path.lower():
+                target_chunks_dir = os.path.join("models", "iitj_chunks")
+            print(f" Target:  {target_chunks_dir}")
+            print("=" * 65)
+            from scripts.build_spatial_chunks import build_spatial_chunks
+            build_spatial_chunks(laz_path=laz_path, output_dir=target_chunks_dir)
+            chunks_dir = target_chunks_dir
+
+    if chunks_dir is not None:
+        print("=" * 65)
+        print("  Hand-AR Dynamic View-Based LiDAR Streamer (Smooth 60 FPS)")
+        print(f" Input File:       {laz_path}")
+        print(f" Dynamic Chunks:   {chunks_dir}")
+        print(f" Streaming Mode:   Load-As-You-View (Ultra-low FPS fluctuations)")
+        print("=" * 65)
+        from handarm.engine.explore_standalone import main as explore_main
+        explore_main(target_path=chunks_dir)
+        return
+
+    # Fallback legacy single-mesh mode (when explicitly requested with --single-mesh)
     print("=" * 65)
-    print("  Hand-AR Direct LAZ/LAS LiDAR Explorer")
+    print("  Hand-AR Single-Mesh LiDAR Mode (--single-mesh requested)")
     print(f" Input File:     {laz_path}")
     print(f" Target Density: {target_points:,} points (capped at {MAX_POINTS:,})")
-    print(f" Stop Limit:     {max_points:,} points (stops reading further points beyond this)")
+    print(f" Stop Limit:     {max_points:,} points")
     print(f" Caching:        {'Disabled' if args.no_cache else 'Enabled'}")
     if args.allow_partial:
         print("  PARTIAL MODE ENABLED: incomplete data may be displayed")
     print("=" * 65)
 
-    # Pre-stream and cache if needed using our loader
     from handarm.geometry.laz_loader import load_laz_to_dataframe
     df = load_laz_to_dataframe(
         laz_path,
@@ -138,7 +186,6 @@ Examples:
         allow_partial=args.allow_partial,
     )
 
-    # Strictly guarantee that no more than MAX_POINTS points are rendered
     if len(df) > MAX_POINTS:
         df = df.iloc[:MAX_POINTS]
 
