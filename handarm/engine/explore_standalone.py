@@ -16,7 +16,8 @@ import os
 import psutil
 import sys
 import time as _time
-from typing import Optional
+from collections import deque
+from typing import Deque, Optional, Tuple
 
 import pandas as pd
 from panda3d.core import Texture as P3DTexture
@@ -24,13 +25,142 @@ from ursina import *
 
 from handarm import config
 from handarm.engine.explore_core import ExploreEnvironment
-from handarm.engine.ui_common import PerformanceUI
 from handarm.tracking.gestures import (
     compute_explore_features,
     classify_right_explore,
     classify_left_explore_standalone,
+    gesture_label,
 )
 from handarm.tracking.hand_tracker import HandTracker
+
+
+class NavigationHUD:
+    """Stable top overlay for gesture state, point loading, and performance."""
+
+    UPDATE_INTERVAL = 3.0
+
+    def __init__(self, max_points: int) -> None:
+        self.max_points = max_points
+        self.started_at = _time.monotonic()
+        self.last_metrics_update = self.started_at
+        self.frame_times: Deque[float] = deque()
+        self.cpu_samples: Deque[float] = deque()
+        self.ram_samples: Deque[float] = deque()
+
+        Entity(
+            parent=camera.ui,
+            model="quad",
+            scale=(2.0, 0.16),
+            position=(0, 0.43),
+            color=color.color(0, 0, 0, 0.72),
+            z=0.1,
+        )
+        self.points_text = Text(
+            parent=camera.ui,
+            text="📊 Loaded Points: 0",
+            position=(-0.05, 0.49),
+            origin=(0, 0),
+            scale=0.8,
+            color=color.azure,
+            z=0.09,
+        )
+        self.gesture_text = Text(
+            parent=camera.ui,
+            text="🖐️ Open Palm: Neutral / Idle",
+            position=(-0.96, 0.49),
+            origin=(-0.5, 0),
+            scale=0.68,
+            color=color.yellow,
+            z=0.09,
+        )
+        self.fps_text = Text(
+            parent=camera.ui,
+            text="FPS: --",
+            position=(0.78, 0.455),
+            origin=(-0.5, 0),
+            scale=0.75,
+            color=color.lime,
+            z=0.09,
+        )
+        self.cpu_text = Text(
+            parent=camera.ui,
+            text="CPU: --%",
+            position=(0.78, 0.415),
+            origin=(-0.5, 0),
+            scale=0.75,
+            color=color.orange,
+            z=0.09,
+        )
+        self.ram_text = Text(
+            parent=camera.ui,
+            text="RAM: --%",
+            position=(0.78, 0.375),
+            origin=(-0.5, 0),
+            scale=0.75,
+            color=color.cyan,
+            z=0.09,
+        )
+
+    @staticmethod
+    def _point_count(env: ExploreEnvironment) -> Tuple[int, int]:
+        """Return only points represented by currently rendered geometry."""
+        loaded_chunks = getattr(env, "loaded_chunks", {})
+        loaded = sum(int(getattr(chunk, "vertex_count", 0)) for chunk in loaded_chunks.values())
+        overview_colors = getattr(env, "_ov_np_rgb", None)
+        overview_count = len(overview_colors) if overview_colors is not None else 0
+
+        if loaded or overview_count:
+            loaded += overview_count
+            return loaded, loaded
+
+        single_mesh = getattr(env, "single_mesh", None)
+        if single_mesh is not None:
+            return len(getattr(single_mesh, "vertices", ())), len(getattr(single_mesh, "vertices", ()))
+
+        return loaded, 0
+
+    def update(self, env: ExploreEnvironment, gesture: str, dt: float) -> None:
+        now = _time.monotonic()
+        self.frame_times.append(now)
+        self.cpu_samples.append(psutil.cpu_percent(interval=None))
+        self.ram_samples.append(psutil.virtual_memory().percent)
+        cutoff = now - self.UPDATE_INTERVAL
+        while self.frame_times and self.frame_times[0] < cutoff:
+            self.frame_times.popleft()
+        while self.cpu_samples and len(self.cpu_samples) > len(self.frame_times):
+            self.cpu_samples.popleft()
+        while self.ram_samples and len(self.ram_samples) > len(self.frame_times):
+            self.ram_samples.popleft()
+
+        loaded, _ = self._point_count(env)
+        self.points_text.text = f"📊 Loaded Points: {loaded:,}"
+        self.gesture_text.text = gesture
+
+        if (now - self.last_metrics_update >= self.UPDATE_INTERVAL
+                and len(self.frame_times) > 1):
+            elapsed = self.frame_times[-1] - self.frame_times[0]
+            fps = (len(self.frame_times) - 1) / elapsed if elapsed else 0.0
+            cpu = sum(self.cpu_samples) / len(self.cpu_samples)
+            ram = sum(self.ram_samples) / len(self.ram_samples)
+            self.fps_text.text = f"FPS: {fps:.1f}"
+            self.cpu_text.text = f"CPU: {cpu:.1f}%"
+            self.ram_text.text = f"RAM: {ram:.1f}%"
+            self.last_metrics_update = now
+
+
+def _navigation_gesture(gesture: str, features: Optional[dict] = None) -> str:
+    """Convert classifier output into the user-facing navigation vocabulary."""
+    if not features:
+        return gesture_label("None")
+    landmarks = features.get("landmarks")
+    if landmarks:
+        pinch = np.hypot(
+            landmarks[4].x - landmarks[8].x,
+            landmarks[4].y - landmarks[8].y,
+        )
+        if pinch < 0.05:
+            return gesture_label("Pinch")
+    return gesture_label(gesture, landmarks)
 
 
 def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] = None) -> None:
@@ -52,7 +182,10 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
             gesture = classify_right_explore(features)
         else:
             gesture = classify_left_explore_standalone(features)
-        return {'gesture': gesture}
+        return {
+            'gesture': gesture,
+            'navigation': _navigation_gesture(gesture, features),
+        }
 
     # -----------------------------------------------------------------------
     # Frame annotator (standalone: draws landmarks + always shows gesture text)
@@ -77,29 +210,16 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     # Ursina app
     # -----------------------------------------------------------------------
     app = Ursina()
+    window.fps_counter.enabled = False
+    window.entity_counter.enabled = False
+    window.collider_counter.enabled = False
     window.color = color.color(0, 0, 0.08)
-    if point_cloud is not None and point_cloud.attrs.get("is_partial"):
-        loaded = point_cloud.attrs["points_decoded"]
-        expected = point_cloud.attrs["point_count"]
-        Text(
-            text=f" PARTIAL DATASET: {loaded:,}/{expected:,} points loaded",
-            parent=camera.ui,
-            position=(0, 0.45),
-            origin=(0, 0),
-            scale=1.2,
-            color=color.red,
-            background=True,
-        )
-
     tracker = HandTracker(
         classify_hand=_classify_standalone,
         annotate_frame=_annotate_standalone,
         detection_confidence=0.7,
         camera_index=config.CAMERA_INDEX,
     )
-
-    # Performance UI
-    perf_ui = PerformanceUI()
 
     # Camera feed UI (direct texture, matching original explore.py)
     FEED_W, FEED_H = 320, 240
@@ -120,25 +240,25 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     Text(
         text="<yellow>HAND CONTROLS\n\n"
              "<orange>RIGHT HAND (ALWAYS ACTIVE)\n"
-             "<white>[Open Palm]  : Enable View Control\n"
-             "<white>[Fist]       : Freeze View\n"
-             "<white><- Move Left : Look Left\n"
-             "<white>-> Move Right: Look Right\n"
+             "<white>🖐️ Open Palm  : Enable View Control\n"
+             "<white>✊ Closed Fist : Freeze View\n"
+             "<white>🤏 Pinch      : Zoom In/Out\n"
+             "<white>👈 Point Left : Look Left\n"
+             "<white>👉 Point Right: Look Right\n"
              "<white>^  Move Up   : Look Up\n"
              "<white>v  Move Down : Look Down\n\n"
              "<cyan>LEFT HAND (WALK MODE)\n"
-             "<white>[Peace]      : Toggle Flight Mode\n"
+             "<white>✌️ Peace       : Toggle Flight Mode\n"
              "<white>Move Palm Up : Move Forward\n"
              "<white>Move Palm Dn : Move Backward\n"
-             "<white>[Fist]       : Stop\n\n"
+             "<white>✊ Closed Fist : Stop\n\n"
              "<lime>LEFT HAND (FLIGHT MODE)\n"
-             "<white>[Thumbs Up]  : Position Reset\n"
-             "<white>[Peace]      : Toggle Walk Mode\n"
-             "<white>[Index Up]   : Fly Up\n"
-             "<white>[Index Down] : Fly Down\n"
+             "<white>👍 Thumbs Up  : Position Reset\n"
+             "<white>✌️ Peace       : Toggle Walk Mode\n"
+             "<white>🖐️ Open Palm  : Fly Up/Down\n"
              "<white>Move Palm Up : Fly Forward\n"
              "<white>Move Palm Dn : Fly Backward\n"
-             "<white>[Fist]       : Stop",
+             "<white>✊ Closed Fist : Stop",
         position=window.top_left + Vec2(0.02, -0.02),
         origin=(-0.5, 0.5), scale=0.8, background=True,
     )
@@ -152,6 +272,8 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         reset_cooldown_duration=0.0,
     )
 
+    hud = NavigationHUD(max_points=point_cloud.attrs.get("point_count", len(point_cloud))
+                        if point_cloud is not None else 0)
 
     right_status = Text(text="Right: Not Detected", position=(0.3, -0.30),
                         scale=1.1, color=color.orange)
@@ -175,10 +297,6 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     # Update loop
     # -----------------------------------------------------------------------
     def update() -> None:
-        fps = int(1 / time.dt) if time.dt > 0 else 0
-        perf_ui.update(fps, psutil.cpu_percent(interval=None),
-                       psutil.virtual_memory().percent)
-
         # Camera feed
         frame = tracker.get_frame()
         if frame is not None:
@@ -192,10 +310,16 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
 
         state = tracker.get_state()
         left, right = state['Left'], state['Right']
+        active_hand = right if right['visible'] else left
+        hud.update(
+            env,
+            active_hand.get("navigation", "🖐️ Open Palm - Neutral / Idle"),
+            time.dt,
+        )
 
-        left_status.text = (f"Left: {left['gesture']}"
+        left_status.text = (f"Left: {gesture_label(left['gesture'])}"
                             if left['visible'] else "Left: Not Detected")
-        right_status.text = (f"Right: {right['gesture']}"
+        right_status.text = (f"Right: {gesture_label(right['gesture'])}"
                              if right['visible'] else "Right: Not Detected")
 
         env.update_steering(right)

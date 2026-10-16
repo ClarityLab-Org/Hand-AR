@@ -7,6 +7,32 @@ landmark coordinate data only, making them independently testable.
 import math
 from typing import Any, Dict, List
 
+GESTURE_LABELS = {
+    "None": "🖐️ Open Palm - Neutral / Idle",
+    "Steering": "🖐️ Open Palm - Neutral / Idle",
+    "Forward": "🖐️ Open Palm - Neutral / Idle",
+    "View Locked": "✊ Closed Fist - Pan / Drag Camera",
+    "Stop": "✊ Closed Fist - Pan / Drag Camera",
+    "Pinch": "🤏 Pinch - Zoom In / Zoom Out",
+    "Point Right": "👉 Point Right - Orbit Right",
+    "Point Left": "👈 Point Left - Orbit Left",
+    "Reset": "👍 Thumbs Up - Reset Camera",
+    "Toggle Flight": "✌️ Peace - Toggle Flight Mode",
+}
+
+
+def gesture_label(gesture: str, landmarks: List[Any] = None) -> str:
+    """Return the emoji label used by the explore HUD for a classified gesture."""
+    if gesture == "Pinch":
+        return GESTURE_LABELS["Pinch"]
+    if landmarks and gesture in ("Steering", "Up", "Down"):
+        index_x = landmarks[8].x
+        if index_x > 0.6:
+            return GESTURE_LABELS["Point Right"]
+        if index_x < 0.4:
+            return GESTURE_LABELS["Point Left"]
+    return GESTURE_LABELS.get(gesture, f"🖐️ {gesture}")
+
 
 # ---------------------------------------------------------------------------
 # Inspect-mode gestures (used by trial2.py in inspect mode)
