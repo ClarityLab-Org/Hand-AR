@@ -150,17 +150,7 @@ class NavigationHUD:
 
 def _navigation_gesture(gesture: str, features: Optional[dict] = None) -> str:
     """Convert classifier output into the user-facing navigation vocabulary."""
-    if not features:
-        return gesture_label("None")
-    landmarks = features.get("landmarks")
-    if landmarks:
-        pinch = np.hypot(
-            landmarks[4].x - landmarks[8].x,
-            landmarks[4].y - landmarks[8].y,
-        )
-        if pinch < 0.05:
-            return gesture_label("Pinch")
-    return gesture_label(gesture, landmarks)
+    return gesture_label(gesture if features else "None")
 
 
 def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] = None) -> None:
@@ -240,25 +230,19 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     Text(
         text="<yellow>HAND CONTROLS\n\n"
              "<orange>RIGHT HAND (ALWAYS ACTIVE)\n"
-             "<white>🖐️ Open Palm  : Enable View Control\n"
-             "<white>✊ Closed Fist : Freeze View\n"
-             "<white>🤏 Pinch      : Zoom In/Out\n"
-             "<white>👈 Point Left : Look Left\n"
-             "<white>👉 Point Right: Look Right\n"
-             "<white>^  Move Up   : Look Up\n"
-             "<white>v  Move Down : Look Down\n\n"
-             "<cyan>LEFT HAND (WALK MODE)\n"
-             "<white>✌️ Peace       : Toggle Flight Mode\n"
-             "<white>Move Palm Up : Move Forward\n"
-             "<white>Move Palm Dn : Move Backward\n"
-             "<white>✊ Closed Fist : Stop\n\n"
-             "<lime>LEFT HAND (FLIGHT MODE)\n"
-             "<white>👍 Thumbs Up  : Position Reset\n"
-             "<white>✌️ Peace       : Toggle Walk Mode\n"
-             "<white>🖐️ Open Palm  : Fly Up/Down\n"
-             "<white>Move Palm Up : Fly Forward\n"
-             "<white>Move Palm Dn : Fly Backward\n"
-             "<white>✊ Closed Fist : Stop",
+             "<white>☝️ Rotate Up   : Tilt Up\n"
+             "<white>👇 Rotate Down : Tilt Down\n"
+             "<white>👈 Rotate Left : Turn Left\n"
+             "<white>👉 Rotate Right: Turn Right\n\n"
+             "<white>👍 Reset View  : Original View\n"
+             "<white>🤏 Zoom In     : Narrow View\n"
+             "<white>✌️ Zoom Out    : Wider View\n\n"
+             "<white>✊ Freeze View : Hold Current View\n\n"
+             "<cyan>LEFT HAND - NAVIGATION (NO ROTATION)\n"
+             "<white>🫴 Move Forward : Walk/Fly Forward\n"
+             "<white>🫳 Move Backward: Walk/Fly Backward\n"
+             "<white>🤜 Move Left   : Strafe Left\n"
+             "<white>🤛 Move Right  : Strafe Right",
         position=window.top_left + Vec2(0.02, -0.02),
         origin=(-0.5, 0.5), scale=0.8, background=True,
     )
@@ -311,11 +295,8 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         state = tracker.get_state()
         left, right = state['Left'], state['Right']
         active_hand = right if right['visible'] else left
-        hud.update(
-            env,
-            active_hand.get("navigation", "🖐️ Open Palm - Neutral / Idle"),
-            time.dt,
-        )
+        active_gesture = active_hand.get("gesture", "None")
+        hud.update(env, gesture_label(active_gesture), time.dt)
 
         left_status.text = (f"Left: {gesture_label(left['gesture'])}"
                             if left['visible'] else "Left: Not Detected")

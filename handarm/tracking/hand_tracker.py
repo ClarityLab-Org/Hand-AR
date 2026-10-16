@@ -49,6 +49,8 @@ class HandTracker:
             'Left': {'visible': False, 'x': 0.5, 'y': 0.5, 'gesture': 'None'},
             'Right': {'visible': False, 'x': 0.5, 'y': 0.5, 'gesture': 'None'},
         }
+        self._gesture_candidates = {'Left': None, 'Right': None}
+        self._gesture_candidate_counts = {'Left': 0, 'Right': 0}
         self._latest_frame: Optional[np.ndarray] = None
         camera_connected = bool(getattr(self._cap, 'isOpened', lambda: True)())
         self._status: Dict[str, Any] = {
@@ -120,6 +122,18 @@ class HandTracker:
                         for idx, hand_lms in enumerate(results.multi_hand_landmarks):
                             hand_type = results.multi_handedness[idx].classification[0].label
                             hand_data = self._classify_hand(hand_lms.landmark, hand_type)
+                            gesture = hand_data.get('gesture', 'None')
+                            if gesture == self._gesture_candidates[hand_type]:
+                                self._gesture_candidate_counts[hand_type] += 1
+                            else:
+                                self._gesture_candidates[hand_type] = gesture
+                                self._gesture_candidate_counts[hand_type] = 1
+                            previous = self._state[hand_type].get('gesture', 'None')
+                            if self._gesture_candidate_counts[hand_type] < 2:
+                                hand_data['gesture'] = previous
+                                hand_data['navigation'] = self._state[hand_type].get(
+                                    'navigation', '🖐️ Neutral / Idle'
+                                )
                             hand_data['visible'] = True
                             hand_data['x'] = hand_lms.landmark[0].x
                             hand_data['y'] = hand_lms.landmark[0].y

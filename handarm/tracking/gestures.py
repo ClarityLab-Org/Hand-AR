@@ -8,29 +8,24 @@ import math
 from typing import Any, Dict, List
 
 GESTURE_LABELS = {
-    "None": "🖐️ Open Palm - Neutral / Idle",
-    "Steering": "🖐️ Open Palm - Neutral / Idle",
-    "Forward": "🖐️ Open Palm - Neutral / Idle",
-    "View Locked": "✊ Closed Fist - Pan / Drag Camera",
-    "Stop": "✊ Closed Fist - Pan / Drag Camera",
-    "Pinch": "🤏 Pinch - Zoom In / Zoom Out",
-    "Point Right": "👉 Point Right - Orbit Right",
-    "Point Left": "👈 Point Left - Orbit Left",
-    "Reset": "👍 Thumbs Up - Reset Camera",
-    "Toggle Flight": "✌️ Peace - Toggle Flight Mode",
+    "None": "🖐️ Neutral / Idle",
+    "Rotate Up": "☝️ Rotate Up",
+    "Rotate Down": "👇 Rotate Down",
+    "Rotate Left": "👈 Rotate Left",
+    "Rotate Right": "👉 Rotate Right",
+    "Move Forward": "🫴 Move Forward",
+    "Move Backward": "🫳 Move Backward",
+    "Move Left": "🤜 Move Left",
+    "Move Right": "🤛 Move Right",
+    "Reset View": "👍 Reset View",
+    "Zoom In": "🤏 Zoom In",
+    "Zoom Out": "✌️ Zoom Out",
+    "Freeze View": "✊ Freeze View",
 }
 
 
 def gesture_label(gesture: str, landmarks: List[Any] = None) -> str:
     """Return the emoji label used by the explore HUD for a classified gesture."""
-    if gesture == "Pinch":
-        return GESTURE_LABELS["Pinch"]
-    if landmarks and gesture in ("Steering", "Up", "Down"):
-        index_x = landmarks[8].x
-        if index_x > 0.6:
-            return GESTURE_LABELS["Point Right"]
-        if index_x < 0.4:
-            return GESTURE_LABELS["Point Left"]
     return GESTURE_LABELS.get(gesture, f"🖐️ {gesture}")
 
 
@@ -116,6 +111,11 @@ def compute_explore_features(landmarks: List[Any]) -> Dict[str, Any]:
         'palm_down': palm_down,
         'index_up_simple': index_up_simple,
         'wrist_y': wrist_y,
+        'wrist_x': wrist.x,
+        'pinch_distance': math.dist(
+            (landmarks[4].x, landmarks[4].y),
+            (landmarks[8].x, landmarks[8].y),
+        ),
         'thumb_dist': thumb_dist,
         'index_dist': index_dist,
         'middle_dist': middle_dist,
@@ -155,11 +155,17 @@ def compute_thumbs_up(features: Dict, margin: float = 0.08) -> bool:
 # ---------------------------------------------------------------------------
 
 def classify_right_explore(features: Dict) -> str:
-    """Classifies right-hand explore gesture: Steering / View Locked / None."""
+    """Classifies freeze, reset, zoom, or one of four camera rotations."""
+    if compute_thumbs_up(features, margin=0.04):
+        return 'Reset View'
+    if features['pinch_distance'] < 0.10 and not features['fist']:
+        return 'Zoom In'
+    if features['peace']:
+        return 'Zoom Out'
+    if features['fist']:
+        return 'Freeze View'
     if features['open_palm']:
-        return 'Steering'
-    elif features['fist']:
-        return 'View Locked'
+        return _directional_gesture(features, "Rotate")
     return 'None'
 
 
@@ -168,49 +174,29 @@ def classify_right_explore(features: Dict) -> str:
 # ---------------------------------------------------------------------------
 
 def classify_left_explore_trial2(features: Dict) -> str:
-    """Left-hand explore classification (trial2.py variant).
-    Priority: Reset > Toggle Flight > Backward > Up > Down > Forward > Stop.
-    Uses distance-based index_up and 0.08 thumbs_up margin."""
-    index_up = compute_index_up_distance(features)
-    index_down = compute_index_down(features)
-    thumbs_up = compute_thumbs_up(features, margin=0.08)
-
-    if thumbs_up:
-        return 'Reset'
-    elif features['peace']:
-        return 'Toggle Flight'
-    elif features['palm_down'] and not features['landmarks'][8].y > features['landmarks'][12].y:
-        return 'Backward'
-    elif index_up:
-        return 'Up'
-    elif index_down:
-        return 'Down'
-    elif features['open_palm']:
-        return 'Forward'
-    elif features['fist']:
-        return 'Stop'
+    """Left-hand translation classifier used by the trial2 variant."""
+    if features['open_palm']:
+        return _directional_gesture(features, "Move")
     return 'None'
 
 
 def classify_left_explore_standalone(features: Dict) -> str:
-    """Left-hand explore classification (explore.py standalone variant).
-    Priority: Reset > Toggle Flight > Backward > Down > Up > Forward > Stop.
-    Uses simple index_up and 0.05 thumbs_up margin."""
-    index_down = compute_index_down(features)
-    thumbs_up = compute_thumbs_up(features, margin=0.05)
-
-    if thumbs_up:
-        return 'Reset'
-    elif features['peace']:
-        return 'Toggle Flight'
-    elif features['palm_down'] and not features['landmarks'][8].y > features['landmarks'][12].y:
-        return 'Backward'
-    elif index_down:
-        return 'Down'
-    elif features['index_up_simple']:
-        return 'Up'
-    elif features['open_palm']:
-        return 'Forward'
-    elif features['fist']:
-        return 'Stop'
+    """Classifies the left hand into one of four camera translations."""
+    if features['open_palm']:
+        return _directional_gesture(features, "Move")
     return 'None'
+
+
+def _directional_gesture(features: Dict, prefix: str) -> str:
+    """Convert hand position into a stable cardinal direction."""
+    x = features['wrist_x']
+    y = features['wrist_y']
+    horizontal = abs(x - 0.5)
+    vertical = abs(y - 0.5)
+    if max(horizontal, vertical) < 0.12:
+        return 'None'
+    if horizontal > vertical:
+        return f"{prefix} {'Right' if x > 0.5 else 'Left'}"
+    if prefix == "Move":
+        return f"Move {'Backward' if y > 0.5 else 'Forward'}"
+    return f"{prefix} {'Down' if y > 0.5 else 'Up'}"

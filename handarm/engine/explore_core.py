@@ -233,6 +233,7 @@ class ExploreEnvironment:
         self.point_thickness_levels = [1, 2, 3]
         self.current_thickness_idx = 0
         self.current_thickness = self.point_thickness_levels[self.current_thickness_idx]
+        self.zoom_target_fov = 90.0
 
         self.color_modes = ["Natural RGB", "Elevation Heatmap", "Vibrant RGB"]
         self.color_mode_idx = 0
@@ -756,6 +757,8 @@ class ExploreEnvironment:
     def reset_player(self) -> None:
         """Resets player to spawn position and rotation."""
         self.auto_rotate = False
+        self.zoom_target_fov = 90.0
+        camera.fov = 90.0
         if self.spawn_initialized:
             self.player.position = self.spawn_position
             self.player.rotation_x = self.spawn_rotation.x
@@ -784,16 +787,32 @@ class ExploreEnvironment:
         return lm.get("name", f"Landmark {idx+1}")
 
     def update_steering(self, right_state: Dict) -> None:
-        """Updates player view direction based on right hand position."""
-        if right_state.get('visible') and right_state.get('gesture') == 'Steering':
-            if right_state['x'] < 0.4:
-                self.player.rotation_y -= 80 * time.dt * (0.4 - right_state['x'])
-            elif right_state['x'] > 0.6:
-                self.player.rotation_y += 80 * time.dt * (right_state['x'] - 0.6)
-            if right_state['y'] < 0.4:
-                self.player.rotation_x -= 60 * time.dt * (0.4 - right_state['y'])
-            elif right_state['y'] > 0.6:
-                self.player.rotation_x += 60 * time.dt * (right_state['y'] - 0.6)
+        """Updates rotation, reset, and zoom from the right-hand gesture."""
+        if not right_state.get('visible'):
+            self.view_frozen = False
+            return
+        gesture = right_state.get('gesture')
+        self.view_frozen = gesture == 'Freeze View'
+        if self.view_frozen:
+            return
+        if gesture == 'Reset View':
+            now = _time.time()
+            if now > self.reset_cooldown:
+                self.reset_player()
+                self.reset_cooldown = now + max(self.reset_cooldown_duration, 0.5)
+        elif gesture == 'Zoom In':
+            self.zoom_target_fov = max(35.0, self.zoom_target_fov - 45.0 * time.dt)
+        elif gesture == 'Zoom Out':
+            self.zoom_target_fov = min(110.0, self.zoom_target_fov + 45.0 * time.dt)
+        elif gesture == 'Rotate Left':
+            self.player.rotation_y -= self.turn_speed * time.dt
+        elif gesture == 'Rotate Right':
+            self.player.rotation_y += self.turn_speed * time.dt
+        elif gesture == 'Rotate Up':
+            self.player.rotation_x -= self.pitch_speed * time.dt
+        elif gesture == 'Rotate Down':
+            self.player.rotation_x += self.pitch_speed * time.dt
+        camera.fov = lerp(camera.fov, self.zoom_target_fov, min(1.0, time.dt * 10.0))
 
     def update_movement_and_terrain(self, left_state: Dict) -> None:
         """Updates movement, flight, dynamic chunk streaming with LOD, and terrain hugging."""
@@ -811,24 +830,15 @@ class ExploreEnvironment:
 
         # Hand gesture movement
         if left_state.get('visible'):
-            if (left_state.get('gesture') == 'Toggle Flight' and
-                    _time.time() > self.flight_toggle_cooldown):
-                self.is_flying = not self.is_flying
-                self.flight_toggle_cooldown = _time.time() + 1.0
-
-            if left_state.get('gesture') == 'Reset':
-                if self.reset_cooldown_duration > 0:
-                    if _time.time() > self.reset_cooldown:
-                        self.reset_player()
-                        self.reset_cooldown = _time.time() + self.reset_cooldown_duration
-                else:
-                    self.reset_player()
-
             if not self.is_flying:
-                if left_state.get('gesture') == 'Backward':
+                if left_state.get('gesture') == 'Move Backward':
                     self.player.position -= self.player.forward * current_speed * time.dt
-                elif left_state.get('gesture') == 'Forward':
+                elif left_state.get('gesture') == 'Move Forward':
                     self.player.position += self.player.forward * current_speed * time.dt
+                elif left_state.get('gesture') == 'Move Left':
+                    self.player.position -= self.player.right * current_speed * time.dt
+                elif left_state.get('gesture') == 'Move Right':
+                    self.player.position += self.player.right * current_speed * time.dt
 
         # Keyboard translation navigation (WASD)
         if held_keys['w']:
@@ -843,17 +853,17 @@ class ExploreEnvironment:
         # Keyboard rotation controls (rotate from a fixed point without translating)
         # Arrow keys: Left/Right to turn yaw, Up/Down to pitch view
         # J/L and I/K: Alternative camera rotation shortcuts
-        if held_keys['left arrow'] or held_keys['j']:
+        if not getattr(self, 'view_frozen', False) and (held_keys['left arrow'] or held_keys['j']):
             self.player.rotation_y -= self.turn_speed * time.dt
-        if held_keys['right arrow'] or held_keys['l']:
+        if not getattr(self, 'view_frozen', False) and (held_keys['right arrow'] or held_keys['l']):
             self.player.rotation_y += self.turn_speed * time.dt
-        if held_keys['up arrow'] or held_keys['i']:
+        if not getattr(self, 'view_frozen', False) and (held_keys['up arrow'] or held_keys['i']):
             self.player.rotation_x -= self.pitch_speed * time.dt
-        if held_keys['down arrow'] or held_keys['k']:
+        if not getattr(self, 'view_frozen', False) and (held_keys['down arrow'] or held_keys['k']):
             self.player.rotation_x += self.pitch_speed * time.dt
 
         # Auto-turntable 360-degree rotation from fixed vantage point
-        if self.auto_rotate:
+        if self.auto_rotate and not getattr(self, 'view_frozen', False):
             self.player.rotation_y += 30.0 * time.dt
 
         # Clamp vertical pitch to prevent camera flipping upside down
@@ -903,14 +913,14 @@ class ExploreEnvironment:
         # Flying vs grounded
         if self.is_flying:
             if left_state.get('visible'):
-                if left_state.get('gesture') == 'Up':
-                    self.player.y += self.vertical_speed * time.dt
-                elif left_state.get('gesture') == 'Down':
-                    self.player.y -= self.vertical_speed * time.dt
-                elif left_state.get('gesture') == 'Backward':
+                if left_state.get('gesture') == 'Move Backward':
                     self.player.position -= self.player.forward * self.flight_speed * time.dt
-                elif left_state.get('gesture') == 'Forward':
+                elif left_state.get('gesture') == 'Move Forward':
                     self.player.position += self.player.forward * self.flight_speed * time.dt
+                elif left_state.get('gesture') == 'Move Left':
+                    self.player.position -= self.player.right * self.flight_speed * time.dt
+                elif left_state.get('gesture') == 'Move Right':
+                    self.player.position += self.player.right * self.flight_speed * time.dt
             if self.player.y < ground_y + 1.8:
                 self.player.y = ground_y + 1.8
         else:
