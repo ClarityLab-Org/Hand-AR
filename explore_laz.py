@@ -10,11 +10,13 @@ Usage:
     python explore_laz.py campus.laz --no-cache
 
 Controls:
-    [W][A][S][D] / Hand Gestures : Move & steer through campus
+    [W][A][S][D]                 : Move (Forward, Left, Backward, Right)
+    [Left]/[Right] or [J]/[L]    : Rotate / Turn view Left / Right (Fixed-point Yaw)
+    [Up]/[Down] or [I]/[K]       : Tilt / Look view Up / Down (Fixed-point Pitch)
+    [T]                          : Toggle 360° Auto-Turntable Rotation
     [Space] / [Left Shift]       : Fly up / Fly down
-    [C]                          : Cycle color modes (Architectural, Drone RGB, Blueprint, Contours)
-    [P]                          : Cycle point thickness (2px, 3px, 5px, 8px)
-    [O]                          : Toggle 3D Perspective Splats (creates solid surfaces)
+    [C]                          : Cycle color modes (Natural RGB, Elevation Heatmap, Vibrant RGB)
+    [P]                          : Cycle point thickness (1px, 2px, 3px)
     [F]                          : Toggle Flight / Grounded mode
     [1] - [4]                    : Teleport to campus landmarks
     [R]                          : Reset player position

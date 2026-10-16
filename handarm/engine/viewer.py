@@ -583,6 +583,9 @@ def main() -> None:
         elif key == 'f':
             if viewer_mode == "explore" and env:
                 env.is_flying = not env.is_flying
+        elif key == 't':
+            if viewer_mode == "explore" and env:
+                env.toggle_auto_rotate()
         elif key in ('1', '2', '3', '4'):
             if viewer_mode == "explore" and env:
                 name = env.jump_to_landmark(int(key) - 1)

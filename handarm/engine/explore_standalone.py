@@ -168,6 +168,8 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
                         scale=1.0, color=color.lime)
     landmark_status = Text(text="Jump: [1] Academic [2] Labs [3] Plaza [4] Gate",
                            position=(0.3, -0.60), scale=0.9, color=color.azure)
+    rotate_status = Text(text="Rotate: [Arrows] / [J][L] | 360° [T]",
+                         position=(0.3, -0.65), scale=0.9, color=color.azure)
 
     # -----------------------------------------------------------------------
     # Update loop
@@ -222,6 +224,12 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
             application.quit()
         elif key == 'r':
             env.reset_player()
+            rotate_status.text = "Rotate: [Arrows] / [J][L] | 360° [T]"
+            rotate_status.color = color.azure
+        elif key == 't':
+            is_active = env.toggle_auto_rotate()
+            rotate_status.text = "Rotate: 360° Turntable ON [T]" if is_active else "Rotate: [Arrows] / [J][L] | 360° [T]"
+            rotate_status.color = color.lime if is_active else color.azure
         elif key == 'c':
             new_mode = env.cycle_color_mode()
             color_status.text = f"Color: {new_mode} [C]"

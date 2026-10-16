@@ -142,6 +142,7 @@ class LoadedChunk:
         # Fast conversion: numpy .tolist() is 10-50x faster than
         # [Vec3(x,y,z) for x,y,z in arr] and Ursina Mesh accepts plain lists
         vertices = raw_verts.tolist()
+        self.vertices = vertices
 
         # Store numpy palette arrays for fast LOD rebuild & color switching
         self._np_rgb = raw_rgb
@@ -378,6 +379,11 @@ class ExploreEnvironment:
         self.flight_speed: float = 16.0
         self.vertical_speed: float = 8.0
 
+        # Fixed-point Rotation Controls
+        self.auto_rotate: bool = False
+        self.turn_speed: float = 75.0   # Horizontal yaw rotation speed (degrees/sec)
+        self.pitch_speed: float = 55.0  # Vertical pitch rotation speed (degrees/sec)
+
         # Stream update throttle
         self.last_stream_time: float = 0.0
 
@@ -555,7 +561,9 @@ class ExploreEnvironment:
             return
 
         # Frame-time budget guard: if the last frame was slow, only do evictions
-        frame_budget_ok = self._last_frame_time < self.FRAME_TIME_GUARD
+        engine_dt = getattr(time, 'dt', 0.0) if hasattr(time, 'dt') else 0.0
+        frame_duration = max(engine_dt, self._last_frame_time)
+        frame_budget_ok = frame_duration < self.FRAME_TIME_GUARD
         color_mode = self.color_modes[self.color_mode_idx]
 
         # 1. Budgeted Chunk Instantiation (at most 1 chunk per frame)
@@ -740,8 +748,14 @@ class ExploreEnvironment:
 
         return mode_name
 
+    def toggle_auto_rotate(self) -> bool:
+        """Toggles continuous 360-degree rotation around fixed vantage point."""
+        self.auto_rotate = not self.auto_rotate
+        return self.auto_rotate
+
     def reset_player(self) -> None:
         """Resets player to spawn position and rotation."""
+        self.auto_rotate = False
         if self.spawn_initialized:
             self.player.position = self.spawn_position
             self.player.rotation_x = self.spawn_rotation.x
@@ -816,15 +830,34 @@ class ExploreEnvironment:
                 elif left_state.get('gesture') == 'Forward':
                     self.player.position += self.player.forward * current_speed * time.dt
 
-        # Keyboard fallback navigation (additional to hand gestures — both work simultaneously)
-        if held_keys['w'] or held_keys['up arrow']:
+        # Keyboard translation navigation (WASD)
+        if held_keys['w']:
             self.player.position += self.player.forward * current_speed * time.dt
-        if held_keys['s'] or held_keys['down arrow']:
+        if held_keys['s']:
             self.player.position -= self.player.forward * current_speed * time.dt
-        if held_keys['a'] or held_keys['left arrow']:
+        if held_keys['a']:
             self.player.position -= self.player.right * current_speed * time.dt
-        if held_keys['d'] or held_keys['right arrow']:
+        if held_keys['d']:
             self.player.position += self.player.right * current_speed * time.dt
+
+        # Keyboard rotation controls (rotate from a fixed point without translating)
+        # Arrow keys: Left/Right to turn yaw, Up/Down to pitch view
+        # J/L and I/K: Alternative camera rotation shortcuts
+        if held_keys['left arrow'] or held_keys['j']:
+            self.player.rotation_y -= self.turn_speed * time.dt
+        if held_keys['right arrow'] or held_keys['l']:
+            self.player.rotation_y += self.turn_speed * time.dt
+        if held_keys['up arrow'] or held_keys['i']:
+            self.player.rotation_x -= self.pitch_speed * time.dt
+        if held_keys['down arrow'] or held_keys['k']:
+            self.player.rotation_x += self.pitch_speed * time.dt
+
+        # Auto-turntable 360-degree rotation from fixed vantage point
+        if self.auto_rotate:
+            self.player.rotation_y += 30.0 * time.dt
+
+        # Clamp vertical pitch to prevent camera flipping upside down
+        self.player.rotation_x = clamp(self.player.rotation_x, -85.0, 85.0)
 
         if self.is_flying:
             if held_keys['space']:

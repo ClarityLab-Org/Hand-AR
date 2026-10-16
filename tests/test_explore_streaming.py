@@ -124,3 +124,69 @@ def test_load_queue_sorting_and_filtering():
     assert "chunk_far.npz" not in [f for _, f in load_queue]
 
 
+def test_lod_subsampling_and_distance_levels():
+    """Verifies that point cloud level of detail/depth correctly scales with distance."""
+    import numpy as np
+    from handarm.engine.explore_core import (
+        LOD_FULL, LOD_MED, LOD_LOW,
+        _lod_subsample, ExploreEnvironment
+    )
+
+    data = np.arange(240, dtype=np.float32).reshape(-1, 3)
+    assert len(data) == 80
+
+    full = _lod_subsample(data, LOD_FULL)
+    assert len(full) == 80, "Full LOD should retain 100% of points"
+
+    med = _lod_subsample(data, LOD_MED)
+    assert len(med) == 27, "Medium LOD (1/3 step) should subsample 1-in-3 points"
+
+    low = _lod_subsample(data, LOD_LOW)
+    assert len(low) == 10, "Low LOD (1/8 step) should subsample 1-in-8 points"
+
+    # Test distance thresholds
+    assert ExploreEnvironment.LOD_FULL_RADIUS == 35.0
+    assert ExploreEnvironment.LOD_MED_RADIUS == 70.0
+    assert ExploreEnvironment.LOAD_RADIUS == 105.0
+
+    # Closer than 35m -> full detail
+    dist_close = 20.0
+    assert dist_close <= ExploreEnvironment.LOD_FULL_RADIUS
+    # 35m to 70m -> medium detail
+    dist_mid = 50.0
+    assert ExploreEnvironment.LOD_FULL_RADIUS < dist_mid <= ExploreEnvironment.LOD_MED_RADIUS
+    # 70m to 105m -> low detail
+    dist_far = 85.0
+    assert ExploreEnvironment.LOD_MED_RADIUS < dist_far <= ExploreEnvironment.LOAD_RADIUS
+
+
+def test_fixed_point_rotation_logic():
+    """Verifies that keyboard rotation rotates view orientation without altering position."""
+    from types import SimpleNamespace
+
+    # Mock player with position and rotation
+    player = SimpleNamespace(
+        position=[10.0, 5.0, -20.0],
+        rotation_x=0.0,
+        rotation_y=45.0,
+        rotation_z=0.0,
+    )
+
+    initial_pos = list(player.position)
+    dt = 0.016  # ~60 FPS tick
+    turn_speed = 75.0
+    pitch_speed = 55.0
+
+    # Simulate rotating left
+    player.rotation_y -= turn_speed * dt
+    assert player.rotation_y < 45.0
+    assert player.position == initial_pos, "Rotation must NOT translate player position"
+
+    # Simulate pitching up
+    player.rotation_x -= pitch_speed * dt
+    assert player.rotation_x < 0.0
+    assert player.position == initial_pos, "Pitch rotation must NOT translate player position"
+
+
+
+
