@@ -182,7 +182,9 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         # Camera feed
         frame = tracker.get_frame()
         if frame is not None:
-            small = np.flipud(frame)
+            # Convert RGB (from MediaPipe tracker) to BGR for Panda3D's FRgb texture buffer
+            bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            small = np.flipud(bgr)
             small = np.ascontiguousarray(small, dtype=np.uint8)
             buf = _p3d_tex.modifyRamImage()
             memoryview(buf).cast('B')[:] = small.tobytes()

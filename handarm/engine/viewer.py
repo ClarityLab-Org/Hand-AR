@@ -528,7 +528,7 @@ def main() -> None:
         elif viewer_mode == "explore":
             frame = tracker.get_frame()
             if frame is not None:
-                cam_feed.upload_frame(frame)
+                cam_feed.upload_frame(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
             state = tracker.get_state()
             left, right = state['Left'], state['Right']
