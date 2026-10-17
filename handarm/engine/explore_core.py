@@ -792,9 +792,7 @@ class ExploreEnvironment:
             self.view_frozen = False
             return
         gesture = right_state.get('gesture')
-        self.view_frozen = gesture == 'Freeze View'
-        if self.view_frozen:
-            return
+        self.view_frozen = False
         if gesture == 'Reset View':
             now = _time.time()
             if now > self.reset_cooldown:
@@ -804,20 +802,13 @@ class ExploreEnvironment:
             self.zoom_target_fov = max(35.0, self.zoom_target_fov - 45.0 * time.dt)
         elif gesture == 'Zoom Out':
             self.zoom_target_fov = min(110.0, self.zoom_target_fov + 45.0 * time.dt)
-        elif gesture == 'Rotate Left':
-            self.player.rotation_y -= self.turn_speed * time.dt
-        elif gesture == 'Rotate Right':
-            self.player.rotation_y += self.turn_speed * time.dt
-        elif gesture == 'Rotate Up':
-            self.player.rotation_x -= self.pitch_speed * time.dt
-        elif gesture == 'Rotate Down':
-            self.player.rotation_x += self.pitch_speed * time.dt
         camera.fov = lerp(camera.fov, self.zoom_target_fov, min(1.0, time.dt * 10.0))
 
     def update_movement_and_terrain(self, left_state: Dict) -> None:
         """Updates movement, flight, dynamic chunk streaming with LOD, and terrain hugging."""
         frame_start = _time.perf_counter()
         current_speed = self.flight_speed if self.is_flying else self.walk_speed
+        left_gesture = left_state.get('gesture') if left_state.get('visible') else None
 
         # Dynamic chunk streaming tick (throttled to ~15 Hz)
         if self.is_chunked:
@@ -870,6 +861,11 @@ class ExploreEnvironment:
         self.player.rotation_x = clamp(self.player.rotation_x, -85.0, 85.0)
 
         if self.is_flying:
+            if left_state.get('visible'):
+                if left_state.get('gesture') == 'Move Up':
+                    self.player.y += self.vertical_speed * time.dt
+                elif left_state.get('gesture') == 'Move Down':
+                    self.player.y -= self.vertical_speed * time.dt
             if held_keys['space']:
                 self.player.y += self.vertical_speed * time.dt
             if held_keys['left shift'] or held_keys['c']:

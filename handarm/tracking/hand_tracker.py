@@ -118,9 +118,11 @@ class HandTracker:
                         'Right': {'visible': False, 'x': 0.5, 'y': 0.5, 'gesture': 'None'},
                     }
 
+                    visible_hands = set()
                     if results.multi_hand_landmarks:
                         for idx, hand_lms in enumerate(results.multi_hand_landmarks):
                             hand_type = results.multi_handedness[idx].classification[0].label
+                            visible_hands.add(hand_type)
                             hand_data = self._classify_hand(hand_lms.landmark, hand_type)
                             gesture = hand_data.get('gesture', 'None')
                             if gesture == self._gesture_candidates[hand_type]:
@@ -138,6 +140,11 @@ class HandTracker:
                             hand_data['x'] = hand_lms.landmark[0].x
                             hand_data['y'] = hand_lms.landmark[0].y
                             new_state[hand_type] = hand_data
+
+                    for hand_type in ('Left', 'Right'):
+                        if hand_type not in visible_hands:
+                            self._gesture_candidates[hand_type] = None
+                            self._gesture_candidate_counts[hand_type] = 0
 
                     if self._annotate_frame is not None:
                         img_rgb = self._annotate_frame(img_rgb, results, new_state)

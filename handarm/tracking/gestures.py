@@ -8,19 +8,14 @@ import math
 from typing import Any, Dict, List
 
 GESTURE_LABELS = {
-    "None": "🖐️ Neutral / Idle",
-    "Rotate Up": "☝️ Rotate Up",
-    "Rotate Down": "👇 Rotate Down",
-    "Rotate Left": "👈 Rotate Left",
-    "Rotate Right": "👉 Rotate Right",
+    "None": "🖐️ Neutral / Hover",
     "Move Forward": "🫴 Move Forward",
     "Move Backward": "🫳 Move Backward",
     "Move Left": "🤜 Move Left",
     "Move Right": "🤛 Move Right",
     "Reset View": "👍 Reset View",
     "Zoom In": "🤏 Zoom In",
-    "Zoom Out": "✌️ Zoom Out",
-    "Freeze View": "✊ Freeze View",
+    "Zoom Out": "🤏 Zoom Out",
 }
 
 
@@ -97,7 +92,9 @@ def compute_explore_features(landmarks: List[Any]) -> Dict[str, Any]:
     pinky_dist = ((landmarks[20].x - wrist.x)**2 + (landmarks[20].y - wrist.y)**2) ** 0.5
 
     peace = index_up and middle_up and ring_down and pinky_down
-    open_palm = index_up and middle_up and ring_up and pinky_up
+    # Allow one imperfectly detected fingertip; MediaPipe landmarks can jitter
+    # briefly while the hand is moving.
+    open_palm = sum((index_up, middle_up, ring_up, pinky_up)) >= 3
     fist = not index_up and not middle_up and not ring_up and not pinky_up
     palm_down = (landmarks[8].y > wrist_y and landmarks[12].y > wrist_y and
                  landmarks[16].y > wrist_y and landmarks[20].y > wrist_y)
@@ -154,18 +151,19 @@ def compute_thumbs_up(features: Dict, margin: float = 0.08) -> bool:
 # Right hand classification (shared — identical in both variants)
 # ---------------------------------------------------------------------------
 
-def classify_right_explore(features: Dict) -> str:
-    """Classifies freeze, reset, zoom, or one of four camera rotations."""
+def classify_right_explore(
+    features: Dict,
+    previous_pinch_distance: float = None,
+) -> str:
+    """Classify simple right-hand view controls from position and posture."""
     if compute_thumbs_up(features, margin=0.04):
         return 'Reset View'
-    if features['pinch_distance'] < 0.10 and not features['fist']:
+    if features['pinch_distance'] < 0.065:
         return 'Zoom In'
-    if features['peace']:
+    if (previous_pinch_distance is not None
+            and previous_pinch_distance < 0.065
+            and features['pinch_distance'] > previous_pinch_distance + 0.012):
         return 'Zoom Out'
-    if features['fist']:
-        return 'Freeze View'
-    if features['open_palm']:
-        return _directional_gesture(features, "Rotate")
     return 'None'
 
 
@@ -175,16 +173,12 @@ def classify_right_explore(features: Dict) -> str:
 
 def classify_left_explore_trial2(features: Dict) -> str:
     """Left-hand translation classifier used by the trial2 variant."""
-    if features['open_palm']:
-        return _directional_gesture(features, "Move")
-    return 'None'
+    return _directional_gesture(features, "Move")
 
 
 def classify_left_explore_standalone(features: Dict) -> str:
-    """Classifies the left hand into one of four camera translations."""
-    if features['open_palm']:
-        return _directional_gesture(features, "Move")
-    return 'None'
+    """Classify four-direction movement and vertical flight."""
+    return _directional_gesture(features, "Move")
 
 
 def _directional_gesture(features: Dict, prefix: str) -> str:
@@ -193,7 +187,7 @@ def _directional_gesture(features: Dict, prefix: str) -> str:
     y = features['wrist_y']
     horizontal = abs(x - 0.5)
     vertical = abs(y - 0.5)
-    if max(horizontal, vertical) < 0.12:
+    if max(horizontal, vertical) < 0.08:
         return 'None'
     if horizontal > vertical:
         return f"{prefix} {'Right' if x > 0.5 else 'Left'}"

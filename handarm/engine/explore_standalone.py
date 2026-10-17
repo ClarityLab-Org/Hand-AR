@@ -20,6 +20,7 @@ from collections import deque
 from typing import Deque, Optional, Tuple
 
 import pandas as pd
+from PIL import Image, ImageDraw, ImageFont
 from panda3d.core import Texture as P3DTexture
 from ursina import *
 
@@ -32,6 +33,21 @@ from handarm.tracking.gestures import (
     gesture_label,
 )
 from handarm.tracking.hand_tracker import HandTracker
+
+
+def _load_emoji_font(size: int) -> ImageFont.FreeTypeFont:
+    """Load a Unicode font that PIL can rasterize into the camera texture."""
+    candidates = (
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    )
+    for path in candidates:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+    raise FileNotFoundError(
+        "No Unicode font found for camera gesture labels; "
+        "install fonts-noto-core or fonts-dejavu."
+    )
 
 
 class NavigationHUD:
@@ -66,7 +82,7 @@ class NavigationHUD:
         )
         self.gesture_text = Text(
             parent=camera.ui,
-            text="🖐️ Open Palm: Neutral / Idle",
+            text="🖐️ Neutral / Hover",
             position=(-0.96, 0.49),
             origin=(-0.5, 0),
             scale=0.68,
@@ -163,13 +179,18 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         print(f"ERROR: Model or chunks not found: {target}")
         sys.exit(1)
 
+    _pinch_distances = {'Left': None, 'Right': None}
+    emoji_font = _load_emoji_font(24)
+
     # -----------------------------------------------------------------------
     # Gesture classifier (explore.py standalone variant)
     # -----------------------------------------------------------------------
     def _classify_standalone(landmarks, hand_type):
         features = compute_explore_features(landmarks)
         if hand_type == 'Right':
-            gesture = classify_right_explore(features)
+            previous_pinch = _pinch_distances[hand_type]
+            gesture = classify_right_explore(features, previous_pinch)
+            _pinch_distances[hand_type] = features['pinch_distance']
         else:
             gesture = classify_left_explore_standalone(features)
         return {
@@ -189,10 +210,14 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
                 _mp_drawing.draw_landmarks(
                     frame_rgb, hand_lms, _mp_hands.HAND_CONNECTIONS,
                 )
-        cv2.putText(frame_rgb, f"LEFT : {state['Left']['gesture']}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        cv2.putText(frame_rgb, f"RIGHT: {state['Right']['gesture']}",
-                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        frame_image = Image.fromarray(frame_rgb)
+        draw = ImageDraw.Draw(frame_image)
+        left = gesture_label(state['Left']['gesture'])
+        right = gesture_label(state['Right']['gesture'])
+        draw.rectangle((4, 4, 420, 72), fill=(0, 0, 0))
+        draw.text((12, 8), f"Left: {left}", font=emoji_font, fill=(80, 255, 120))
+        draw.text((12, 38), f"Right: {right}", font=emoji_font, fill=(80, 255, 120))
+        frame_rgb = np.asarray(frame_image)
         # Standalone keeps RGB, resizes to 320x240 (matching original explore.py)
         return cv2.resize(frame_rgb, (320, 240))
 
@@ -225,24 +250,30 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
                        position=(-0.67, -0.335))
     feed_view.model.setTexture(_p3d_tex)
     Text("LIVE", position=(-0.67, -0.168), scale=0.9, color=color.red)
+    camera_gesture_text = Text(
+        parent=camera.ui,
+        text="Left: Not Detected\nRight: Not Detected",
+        position=(-0.875, -0.425),
+        origin=(-0.5, 0),
+        scale=0.55,
+        color=color.white,
+        background=True,
+        z=-0.02,
+    )
 
     # Legend
     Text(
-        text="<yellow>HAND CONTROLS\n\n"
-             "<orange>RIGHT HAND (ALWAYS ACTIVE)\n"
-             "<white>☝️ Rotate Up   : Tilt Up\n"
-             "<white>👇 Rotate Down : Tilt Down\n"
-             "<white>👈 Rotate Left : Turn Left\n"
-             "<white>👉 Rotate Right: Turn Right\n\n"
-             "<white>👍 Reset View  : Original View\n"
-             "<white>🤏 Zoom In     : Narrow View\n"
-             "<white>✌️ Zoom Out    : Wider View\n\n"
-             "<white>✊ Freeze View : Hold Current View\n\n"
-             "<cyan>LEFT HAND - NAVIGATION (NO ROTATION)\n"
-             "<white>🫴 Move Forward : Walk/Fly Forward\n"
-             "<white>🫳 Move Backward: Walk/Fly Backward\n"
-             "<white>🤜 Move Left   : Strafe Left\n"
-             "<white>🤛 Move Right  : Strafe Right",
+        text="<yellow>HAND GESTURES\n\n"
+             "<orange>RIGHT HAND (VIEW CONTROL)\n"
+             "<white>🖐️ Open Palm : Neutral / Hover\n"
+             "<white>🤏 Pinch     : Zoom In / Zoom Out\n"
+             "<white>👍 Thumbs Up : Reset View\n\n"
+             "<cyan>LEFT HAND (DATA MOVEMENT)\n"
+             "<white>🫴 Move Forward : Hand above center\n"
+             "<white>🫳 Move Backward: Hand below center\n"
+             "<white>🤜 Move Left   : Hand left of center\n"
+             "<white>🤛 Move Right  : Hand right of center\n\n"
+             "<white>Keep the hand near the center for 🖐️ Neutral / Hover",
         position=window.top_left + Vec2(0.02, -0.02),
         origin=(-0.5, 0.5), scale=0.8, background=True,
     )
@@ -298,10 +329,13 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         active_gesture = active_hand.get("gesture", "None")
         hud.update(env, gesture_label(active_gesture), time.dt)
 
-        left_status.text = (f"Left: {gesture_label(left['gesture'])}"
-                            if left['visible'] else "Left: Not Detected")
-        right_status.text = (f"Right: {gesture_label(right['gesture'])}"
-                             if right['visible'] else "Right: Not Detected")
+        left_label = (gesture_label(left['gesture'])
+                      if left['visible'] else "Not Detected")
+        right_label = (gesture_label(right['gesture'])
+                       if right['visible'] else "Not Detected")
+        left_status.text = f"Left: {left_label}"
+        right_status.text = f"Right: {right_label}"
+        camera_gesture_text.text = f"Left: {left_label}\nRight: {right_label}"
 
         env.update_steering(right)
         env.update_movement_and_terrain(left)
