@@ -802,6 +802,14 @@ class ExploreEnvironment:
             self.zoom_target_fov = max(35.0, self.zoom_target_fov - 45.0 * time.dt)
         elif gesture == 'Zoom Out':
             self.zoom_target_fov = min(110.0, self.zoom_target_fov + 45.0 * time.dt)
+        elif gesture == 'Rotate Left':
+            self.player.rotation_y -= self.turn_speed * time.dt
+        elif gesture == 'Rotate Right':
+            self.player.rotation_y += self.turn_speed * time.dt
+        elif gesture == 'Rotate Up':
+            self.player.rotation_x -= self.pitch_speed * time.dt
+        elif gesture == 'Rotate Down':
+            self.player.rotation_x += self.pitch_speed * time.dt
         camera.fov = lerp(camera.fov, self.zoom_target_fov, min(1.0, time.dt * 10.0))
 
     def update_movement_and_terrain(self, left_state: Dict) -> None:

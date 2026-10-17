@@ -9,13 +9,17 @@ from typing import Any, Dict, List
 
 GESTURE_LABELS = {
     "None": "🖐️ Neutral / Hover",
+    "Rotate Up": "☝️ Rotate Up",
+    "Rotate Down": "👇 Rotate Down",
+    "Rotate Left": "👈 Rotate Left",
+    "Rotate Right": "👉 Rotate Right",
     "Move Forward": "🫴 Move Forward",
     "Move Backward": "🫳 Move Backward",
     "Move Left": "🤜 Move Left",
     "Move Right": "🤛 Move Right",
     "Reset View": "👍 Reset View",
     "Zoom In": "🤏 Zoom In",
-    "Zoom Out": "🤏 Zoom Out",
+    "Zoom Out": "✌️ Zoom Out",
 }
 
 
@@ -156,15 +160,13 @@ def classify_right_explore(
     previous_pinch_distance: float = None,
 ) -> str:
     """Classify simple right-hand view controls from position and posture."""
-    if compute_thumbs_up(features, margin=0.04):
+    if compute_thumbs_up(features, margin=0.02):
         return 'Reset View'
     if features['pinch_distance'] < 0.065:
         return 'Zoom In'
-    if (previous_pinch_distance is not None
-            and previous_pinch_distance < 0.065
-            and features['pinch_distance'] > previous_pinch_distance + 0.012):
+    if features['peace']:
         return 'Zoom Out'
-    return 'None'
+    return _directional_gesture(features, "Rotate")
 
 
 # ---------------------------------------------------------------------------
@@ -182,15 +184,39 @@ def classify_left_explore_standalone(features: Dict) -> str:
 
 
 def _directional_gesture(features: Dict, prefix: str) -> str:
-    """Convert hand position into a stable cardinal direction."""
+    """Convert hand position into non-overlapping cardinal zones."""
     x = features['wrist_x']
     y = features['wrist_y']
-    horizontal = abs(x - 0.5)
-    vertical = abs(y - 0.5)
-    if max(horizontal, vertical) < 0.08:
-        return 'None'
-    if horizontal > vertical:
-        return f"{prefix} {'Right' if x > 0.5 else 'Left'}"
+    # The center cross is neutral. Forward/backward use a narrow vertical
+    # corridor; left/right use a separate horizontal corridor. Corner
+    # positions stay neutral instead of stealing a neighboring direction.
+    center = 0.5
+    half_zone = 0.20
     if prefix == "Move":
-        return f"Move {'Backward' if y > 0.5 else 'Forward'}"
-    return f"{prefix} {'Down' if y > 0.5 else 'Up'}"
+        # Give the full top and bottom bands to forward/backward. This
+        # prevents a hand drifting sideways while raised from becoming a
+        # left/right command.
+        if y < center - 0.15:
+            return "Move Forward"
+        if y > center + 0.15:
+            return "Move Backward"
+        if center - half_zone <= x <= center + half_zone:
+            return "None"
+        if center - half_zone <= y <= center + half_zone:
+            if x < center - 0.10:
+                return "Move Left"
+            if x > center + 0.10:
+                return "Move Right"
+        return 'None'
+    # Use full-height top/bottom bands for vertical rotation. MediaPipe's
+    # wrist x-coordinate often shifts while the hand is raised or lowered.
+    if y < center - 0.15:
+        return f"{prefix} Up"
+    if y > center + 0.15:
+        return f"{prefix} Down"
+    if center - half_zone <= y <= center + half_zone:
+        if x < center - 0.10:
+            return f"{prefix} Left"
+        if x > center + 0.10:
+            return f"{prefix} Right"
+    return 'None'

@@ -180,7 +180,7 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         sys.exit(1)
 
     _pinch_distances = {'Left': None, 'Right': None}
-    emoji_font = _load_emoji_font(24)
+    emoji_font = _load_emoji_font(36)
 
     # -----------------------------------------------------------------------
     # Gesture classifier (explore.py standalone variant)
@@ -212,11 +212,22 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
                 )
         frame_image = Image.fromarray(frame_rgb)
         draw = ImageDraw.Draw(frame_image)
-        left = gesture_label(state['Left']['gesture'])
-        right = gesture_label(state['Right']['gesture'])
-        draw.rectangle((4, 4, 420, 72), fill=(0, 0, 0))
-        draw.text((12, 8), f"Left: {left}", font=emoji_font, fill=(80, 255, 120))
-        draw.text((12, 38), f"Right: {right}", font=emoji_font, fill=(80, 255, 120))
+        if state['Left']['visible'] or state['Right']['visible']:
+            draw.rectangle((4, 4, 620, 100), fill=(0, 0, 0))
+        if state['Left']['visible']:
+            draw.text(
+                (12, 8),
+                f"Left: {gesture_label(state['Left']['gesture'])}",
+                font=emoji_font,
+                fill=(80, 255, 120),
+            )
+        if state['Right']['visible']:
+            draw.text(
+                (12, 52),
+                f"Right: {gesture_label(state['Right']['gesture'])}",
+                font=emoji_font,
+                fill=(80, 255, 120),
+            )
         frame_rgb = np.asarray(frame_image)
         # Standalone keeps RGB, resizes to 320x240 (matching original explore.py)
         return cv2.resize(frame_rgb, (320, 240))
@@ -250,32 +261,25 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
                        position=(-0.67, -0.335))
     feed_view.model.setTexture(_p3d_tex)
     Text("LIVE", position=(-0.67, -0.168), scale=0.9, color=color.red)
-    camera_gesture_text = Text(
-        parent=camera.ui,
-        text="Left: Not Detected\nRight: Not Detected",
-        position=(-0.875, -0.425),
-        origin=(-0.5, 0),
-        scale=0.55,
-        color=color.white,
-        background=True,
-        z=-0.02,
-    )
-
     # Legend
     Text(
         text="<yellow>HAND GESTURES\n\n"
-             "<orange>RIGHT HAND (VIEW CONTROL)\n"
+             "<orange>🫱 RIGHT HAND\n"
              "<white>🖐️ Open Palm : Neutral / Hover\n"
-             "<white>🤏 Pinch     : Zoom In / Zoom Out\n"
+             "<white>🤏 Pinch     : Zoom In\n"
+             "<white>✌️ Peace sign : Zoom Out\n"
              "<white>👍 Thumbs Up : Reset View\n\n"
-             "<cyan>LEFT HAND (DATA MOVEMENT)\n"
+             "<white>👈 Hand left  : Rotate Left\n"
+             "<white>👉 Hand right : Rotate Right\n"
+             "<white>☝️ Hand up    : Rotate Up\n"
+             "<white>👇 Hand down  : Rotate Down\n\n"
+             "<cyan>🫲 LEFT HAND\n"
              "<white>🫴 Move Forward : Hand above center\n"
              "<white>🫳 Move Backward: Hand below center\n"
              "<white>🤜 Move Left   : Hand left of center\n"
-             "<white>🤛 Move Right  : Hand right of center\n\n"
-             "<white>Keep the hand near the center for 🖐️ Neutral / Hover",
+             "<white>🤛 Move Right  : Hand right of center",
         position=window.top_left + Vec2(0.02, -0.02),
-        origin=(-0.5, 0.5), scale=0.8, background=True,
+        origin=(-0.5, 0.5), scale=0.8,
     )
     # Point cloud environment (standalone: ::6 downsample, thickness 4, no reset cooldown)
     print(f"Loading Point Cloud Environment from {target}...")
@@ -290,15 +294,6 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     hud = NavigationHUD(max_points=point_cloud.attrs.get("point_count", len(point_cloud))
                         if point_cloud is not None else 0)
 
-    right_status = Text(text="Right: Not Detected", position=(0.3, -0.30),
-                        scale=1.1, color=color.orange)
-    left_status = Text(text="Left: Not Detected", position=(0.3, -0.35),
-                       scale=1.1, color=color.cyan)
-    flight_status = Text(text="Mode: Flying" if env.is_flying else "Mode: Grounded",
-                         position=(0.3, -0.40), scale=1.1,
-                         color=color.cyan if env.is_flying else color.green)
-    color_status = Text(text="Color: Natural RGB [C]", position=(0.3, -0.45),
-                        scale=1.1, color=color.yellow)
     size_status = Text(text="Point Size: 1px [P]", position=(0.3, -0.50),
                        scale=1.1, color=color.white)
     chunk_status = Text(text="Streamed: --", position=(0.3, -0.55),
@@ -329,20 +324,8 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         active_gesture = active_hand.get("gesture", "None")
         hud.update(env, gesture_label(active_gesture), time.dt)
 
-        left_label = (gesture_label(left['gesture'])
-                      if left['visible'] else "Not Detected")
-        right_label = (gesture_label(right['gesture'])
-                       if right['visible'] else "Not Detected")
-        left_status.text = f"Left: {left_label}"
-        right_status.text = f"Right: {right_label}"
-        camera_gesture_text.text = f"Left: {left_label}\nRight: {right_label}"
-
         env.update_steering(right)
         env.update_movement_and_terrain(left)
-
-        flight_status.text = ("Mode: Flying" if env.is_flying
-                              else "Mode: Grounded")
-        flight_status.color = color.red if env.is_flying else color.green
 
         if env.is_chunked:
             pts_count = sum(c.vertex_count for c in env.loaded_chunks.values())
@@ -373,7 +356,7 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
             rotate_status.color = color.lime if is_active else color.azure
         elif key == 'c':
             new_mode = env.cycle_color_mode()
-            color_status.text = f"Color: {new_mode} [C]"
+            print(f"Color mode: {new_mode}")
         elif key == 'p':
             new_size = env.cycle_point_thickness()
             size_status.text = f"Point Size: {new_size} [P]"
