@@ -17,6 +17,7 @@ from ursina import *
 from ursina.prefabs.first_person_controller import FirstPersonController
 
 from handarm.geometry.alignment import auto_align_up_axis
+from handarm import config
 
 # ---------------------------------------------------------------------------
 # LOD level definitions
@@ -167,9 +168,11 @@ class LoadedChunk:
             thickness=thickness,
         )
         self.mesh.clearTexGen(TextureStage.getDefault())
+        self.mesh.setRenderModeThickness(thickness, 1)
         self.entity = Entity(model=self.mesh)
         self.entity.set_render_mode_perspective(False)
         self.entity.set_render_mode_thickness(thickness)
+        self.entity.setRenderModeThickness(thickness, 1)
 
     def set_color_mode(self, mode: str) -> None:
         if mode == self._color_mode:
@@ -183,13 +186,16 @@ class LoadedChunk:
             self.mesh.colors = self._np_vib.tolist()
         self.mesh.generate()
         self.mesh.clearTexGen(TextureStage.getDefault())
+        self.mesh.setRenderModeThickness(self.mesh.thickness, 1)
 
     def set_thickness(self, thickness: int) -> None:
         self.mesh.clearTexGen(TextureStage.getDefault())
         self.mesh.render_points_in_3d = False
         self.mesh.thickness = thickness
+        self.mesh.setRenderModeThickness(thickness, 1)
         self.entity.set_render_mode_perspective(False)
         self.entity.set_render_mode_thickness(thickness)
+        self.entity.setRenderModeThickness(thickness, 1)
 
     def destroy(self) -> None:
         destroy(self.entity)
@@ -226,13 +232,24 @@ class ExploreEnvironment:
 
     def __init__(self, target_path: str, point_cloud: Optional[pd.DataFrame] = None,
                  downsample_step: int = 1,
-                 point_thickness: float = 1.0,
+                 point_thickness: Optional[float] = None,
                  reset_cooldown_duration: float = 2.0) -> None:
         """Initializes point cloud streamer, overview LOD, and first-person controller."""
+        if point_thickness is None:
+            point_thickness = config.POINT_THICKNESS
         self.target_path = target_path
-        self.point_thickness_levels = [1, 2, 3]
-        self.current_thickness_idx = 0
-        self.current_thickness = self.point_thickness_levels[self.current_thickness_idx]
+
+        # Honor exact point thickness configured in .env / config
+        req_thickness = max(1, int(round(point_thickness))) if point_thickness is not None else 2
+        self.current_thickness = req_thickness
+
+        # Thickness levels for cycling with [P] key
+        levels = [1, 2, 3, 4, 5, 6, 8, 10]
+        if req_thickness not in levels:
+            levels.append(req_thickness)
+            levels.sort()
+        self.point_thickness_levels = levels
+        self.current_thickness_idx = self.point_thickness_levels.index(req_thickness)
         self.zoom_target_fov = 90.0
 
         self.color_modes = ["Natural RGB", "Elevation Heatmap", "Vibrant RGB"]
@@ -318,9 +335,11 @@ class ExploreEnvironment:
                     thickness=self.current_thickness,
                 )
                 self.overview_mesh.clearTexGen(TextureStage.getDefault())
+                self.overview_mesh.setRenderModeThickness(self.current_thickness, 1)
                 self.overview_entity = Entity(model=self.overview_mesh)
                 self.overview_entity.set_render_mode_perspective(False)
                 self.overview_entity.set_render_mode_thickness(self.current_thickness)
+                self.overview_entity.setRenderModeThickness(self.current_thickness, 1)
 
             self.points_xz = np.empty((0, 2), dtype=np.float32)
             self.points_y = np.empty((0,), dtype=np.float32)
@@ -375,15 +394,15 @@ class ExploreEnvironment:
         self.reset_cooldown: float = 0
         self.reset_cooldown_duration: float = reset_cooldown_duration
 
-        # Navigation Speeds
-        self.walk_speed: float = 6.0
-        self.flight_speed: float = 16.0
-        self.vertical_speed: float = 8.0
+        # Navigation Speeds (loaded from config/.env)
+        self.walk_speed: float = config.WALK_SPEED
+        self.flight_speed: float = config.FLIGHT_SPEED
+        self.vertical_speed: float = config.VERTICAL_SPEED
 
-        # Fixed-point Rotation Controls
+        # Fixed-point Rotation Controls (loaded from config/.env)
         self.auto_rotate: bool = False
-        self.turn_speed: float = 75.0   # Horizontal yaw rotation speed (degrees/sec)
-        self.pitch_speed: float = 55.0  # Vertical pitch rotation speed (degrees/sec)
+        self.turn_speed: float = config.TURN_SPEED   # Horizontal yaw rotation speed (degrees/sec)
+        self.pitch_speed: float = config.PITCH_SPEED  # Vertical pitch rotation speed (degrees/sec)
 
         # Stream update throttle
         self.last_stream_time: float = 0.0
@@ -419,9 +438,11 @@ class ExploreEnvironment:
             thickness=self.current_thickness,
         )
         self.single_mesh.clearTexGen(TextureStage.getDefault())
+        self.single_mesh.setRenderModeThickness(self.current_thickness, 1)
         self.single_entity = Entity(model=self.single_mesh)
         self.single_entity.set_render_mode_perspective(False)
         self.single_entity.set_render_mode_thickness(self.current_thickness)
+        self.single_entity.setRenderModeThickness(self.current_thickness, 1)
 
     def _get_desired_lod(self, distance: float) -> int:
         """Returns the LOD level for a given distance from the player."""
@@ -701,18 +722,24 @@ class ExploreEnvironment:
 
     def set_point_thickness(self, thickness: int) -> None:
         """Sets hardware point thickness across all active chunks."""
-        self.current_thickness = thickness
+        self.current_thickness = max(1, int(round(thickness)))
         if self.is_chunked:
-            if self.overview_entity:
-                self.overview_entity.set_render_mode_thickness(thickness)
+            if getattr(self, "overview_entity", None):
+                self.overview_entity.set_render_mode_thickness(self.current_thickness)
+                self.overview_entity.setRenderModeThickness(self.current_thickness, 1)
+            if getattr(self, "overview_mesh", None):
+                self.overview_mesh.setRenderModeThickness(self.current_thickness, 1)
             for chunk in self.loaded_chunks.values():
-                chunk.set_thickness(thickness)
+                chunk.set_thickness(self.current_thickness)
         else:
-            if hasattr(self, "single_entity"):
-                self.single_entity.set_render_mode_thickness(thickness)
+            if getattr(self, "single_entity", None):
+                self.single_entity.set_render_mode_thickness(self.current_thickness)
+                self.single_entity.setRenderModeThickness(self.current_thickness, 1)
+            if getattr(self, "single_mesh", None):
+                self.single_mesh.setRenderModeThickness(self.current_thickness, 1)
 
     def cycle_point_thickness(self) -> str:
-        """Cycles between point thicknesses (1px, 2px, 3px)."""
+        """Cycles between point thicknesses."""
         self.current_thickness_idx = (self.current_thickness_idx + 1) % len(self.point_thickness_levels)
         t = self.point_thickness_levels[self.current_thickness_idx]
         self.set_point_thickness(t)

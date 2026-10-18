@@ -16,7 +16,7 @@ _env_file: Path = PROJECT_ROOT / ".env"
 if _env_file.exists():
     try:
         from dotenv import load_dotenv
-        load_dotenv(_env_file)
+        load_dotenv(_env_file, override=True)
     except ImportError:
         print(" python-dotenv not installed. Install with: pip install python-dotenv")
         print("  For now, using defaults. .env file will be ignored.")
@@ -54,6 +54,51 @@ MODELS_COMPRESSED_DIR: str = str(PROJECT_ROOT / "models_compressed")
 SKETCHFAB_TOKEN: str = os.getenv("SKETCHFAB_TOKEN", "")
 
 # ---------------------------------------------------------------------------
+# Point Cloud Rendering
+# ---------------------------------------------------------------------------
+def _load_point_size_from_env() -> float:
+    """Robustly reads POINT_THICKNESS or POINT_SIZE from environment."""
+    raw_pt = os.getenv("POINT_THICKNESS")
+    raw_ps = os.getenv("POINT_SIZE")
+
+    val_pt = None
+    val_ps = None
+    if raw_pt is not None:
+        try:
+            val_pt = float(raw_pt.strip())
+        except ValueError:
+            pass
+    if raw_ps is not None:
+        try:
+            val_ps = float(raw_ps.strip())
+        except ValueError:
+            pass
+
+    if val_pt is not None and val_ps is not None:
+        # If both are set and differ, respect whichever was edited from 1.0 or pick val_pt
+        if val_pt != val_ps:
+            return val_pt if val_pt != 1.0 else val_ps
+        return val_pt
+    if val_pt is not None:
+        return val_pt
+    if val_ps is not None:
+        return val_ps
+    return 2.0
+
+
+POINT_SIZE: float = _load_point_size_from_env()
+POINT_THICKNESS: float = POINT_SIZE
+
+# ---------------------------------------------------------------------------
+# Navigation Speeds
+# ---------------------------------------------------------------------------
+WALK_SPEED: float = float(os.getenv("WALK_SPEED", "6.0"))
+FLIGHT_SPEED: float = float(os.getenv("FLIGHT_SPEED", "16.0"))
+VERTICAL_SPEED: float = float(os.getenv("VERTICAL_SPEED", "8.0"))
+TURN_SPEED: float = float(os.getenv("TURN_SPEED", "75.0"))
+PITCH_SPEED: float = float(os.getenv("PITCH_SPEED", "55.0"))
+
+# ---------------------------------------------------------------------------
 # Debug
 # ---------------------------------------------------------------------------
 DEBUG: bool = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
@@ -83,6 +128,24 @@ def validate_config() -> List[str]:
 
     if not (0 <= SMOOTHING_ALPHA <= 1):
         errors.append("SMOOTHING_ALPHA must be between 0 and 1")
+
+    if not (1.0 <= POINT_SIZE <= 10.0):
+        errors.append("POINT_SIZE must be between 1.0 and 10.0")
+
+    if WALK_SPEED <= 0:
+        errors.append("WALK_SPEED must be > 0")
+
+    if FLIGHT_SPEED <= 0:
+        errors.append("FLIGHT_SPEED must be > 0")
+
+    if VERTICAL_SPEED <= 0:
+        errors.append("VERTICAL_SPEED must be > 0")
+
+    if TURN_SPEED <= 0:
+        errors.append("TURN_SPEED must be > 0")
+
+    if PITCH_SPEED <= 0:
+        errors.append("PITCH_SPEED must be > 0")
 
     return errors
 
