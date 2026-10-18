@@ -17,7 +17,7 @@ import psutil
 import sys
 import time as _time
 from collections import deque
-from typing import Deque, Optional, Tuple
+from typing import Deque, List, Optional, Tuple
 
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
@@ -35,86 +35,206 @@ from handarm.tracking.gestures import (
 from handarm.tracking.hand_tracker import HandTracker
 
 
-def _load_emoji_font(size: int) -> ImageFont.FreeTypeFont:
+def _load_emoji_font(size: int):
     """Load a Unicode font that PIL can rasterize into the camera texture."""
     candidates = (
+        "/usr/share/fonts/gdouros-symbola/Symbola.ttf",
+        "DejaVuSans.ttf",
+        "NotoSans-Regular.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/google-noto-vf/NotoSans[wght].ttf",
+        "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
     )
-    for path in candidates:
-        if os.path.exists(path):
-            return ImageFont.truetype(path, size)
-    raise FileNotFoundError(
-        "No Unicode font found for camera gesture labels; "
-        "install fonts-noto-core or fonts-dejavu."
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size)
+        except (OSError, IOError):
+            continue
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _load_ui_fonts() -> Tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
+    """Load bold sans-serif fonts for telemetry HUD."""
+    font_paths = (
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     )
+    for p in font_paths:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, 14), ImageFont.truetype(p, 16)
+            except Exception:
+                continue
+    try:
+        return ImageFont.load_default(size=14), ImageFont.load_default(size=16)
+    except TypeError:
+        f = ImageFont.load_default()
+        return f, f
+
+
+def _render_telemetry_hud(
+    fps: float,
+    cpu: float,
+    ram: float,
+    fps_history: List[float],
+    cpu_history: List[float],
+    ram_history: List[float],
+    font_label: ImageFont.ImageFont,
+    font_val: ImageFont.ImageFont,
+) -> Image.Image:
+    """Render high-contrast telemetry card with sparkline graphs for FPS, CPU, RAM."""
+    W, H = 600, 84
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Outer container with rounded corners and border
+    draw.rounded_rectangle(
+        (0, 0, W - 1, H - 1),
+        radius=10,
+        fill=(12, 16, 25, 225),
+        outline=(42, 58, 82, 220),
+        width=2,
+    )
+
+    col_w = W // 3
+    metrics = [
+        ("FPS", f"{fps:.1f}", (57, 255, 20), fps_history, 144.0),
+        ("CPU", f"{cpu:.1f}%", (255, 167, 38), cpu_history, 100.0),
+        ("RAM", f"{ram:.1f}%", (41, 182, 246), ram_history, 100.0),
+    ]
+
+    for i, (label, val_str, color_rgb, history, max_val) in enumerate(metrics):
+        x_off = i * col_w
+        if i > 0:
+            draw.line((x_off, 10, x_off, H - 10), fill=(40, 54, 76, 180), width=1)
+
+        # Label and Value
+        draw.text((x_off + 12, 8), label, font=font_label, fill=(160, 180, 205, 255))
+        draw.text((x_off + 62, 7), val_str, font=font_val, fill=color_rgb + (255,))
+
+        # Sparkline area
+        gx0 = x_off + 10
+        gy0 = 34
+        gw = col_w - 20
+        gh = 40
+
+        # Graph background box
+        draw.rounded_rectangle(
+            (gx0, gy0, gx0 + gw, gy0 + gh),
+            radius=4,
+            fill=(8, 11, 18, 210),
+            outline=(32, 44, 64, 160),
+            width=1,
+        )
+
+        # 50% dashed / subtle reference line
+        mid_y = gy0 + gh // 2
+        for dx in range(0, gw, 8):
+            draw.line((gx0 + dx, mid_y, min(gx0 + dx + 4, gx0 + gw), mid_y), fill=(35, 48, 70, 140), width=1)
+
+        # Plot points
+        pts = []
+        n = len(history)
+        step = gw / max(1, n - 1) if n > 1 else gw
+        for idx, v in enumerate(history):
+            norm = max(0.0, min(1.0, v / max_val))
+            px = gx0 + idx * step
+            py = (gy0 + gh - 2) - norm * (gh - 4)
+            pts.append((px, py))
+
+        if len(pts) >= 2:
+            poly = [(gx0, gy0 + gh - 1)] + pts + [(gx0 + gw, gy0 + gh - 1)]
+            fill_col = color_rgb + (50,)
+            draw.polygon(poly, fill=fill_col)
+            draw.line(pts, fill=color_rgb + (240,), width=2)
+            last_x, last_y = pts[-1]
+            draw.ellipse(
+                (last_x - 3, last_y - 3, last_x + 3, last_y + 3),
+                fill=(255, 255, 255, 255),
+                outline=color_rgb,
+                width=1,
+            )
+        elif pts:
+            last_x, last_y = pts[-1]
+            draw.ellipse(
+                (last_x - 3, last_y - 3, last_x + 3, last_y + 3),
+                fill=(255, 255, 255, 255),
+                outline=color_rgb,
+                width=1,
+            )
+
+    return img
 
 
 class NavigationHUD:
-    """Stable top overlay for gesture state, point loading, and performance."""
+    """Stable top overlay for gesture state, point loading, and performance telemetry."""
 
-    UPDATE_INTERVAL = 3.0
+    UPDATE_INTERVAL = 0.4
 
     def __init__(self, max_points: int) -> None:
         self.max_points = max_points
         self.started_at = _time.monotonic()
         self.last_metrics_update = self.started_at
         self.frame_times: Deque[float] = deque()
-        self.cpu_samples: Deque[float] = deque()
-        self.ram_samples: Deque[float] = deque()
+        self.fps_history: Deque[float] = deque([60.0] * 6, maxlen=24)
+        self.cpu_history: Deque[float] = deque([15.0] * 6, maxlen=24)
+        self.ram_history: Deque[float] = deque([50.0] * 6, maxlen=24)
 
-        Entity(
-            parent=camera.ui,
-            model="quad",
-            scale=(2.0, 0.16),
-            position=(0, 0.43),
-            color=color.color(0, 0, 0, 0.72),
-            z=0.1,
-        )
-        self.points_text = Text(
-            parent=camera.ui,
-            text="📊 Loaded Points: 0",
-            position=(-0.05, 0.49),
-            origin=(0, 0),
-            scale=0.8,
-            color=color.azure,
-            z=0.09,
-        )
+        self.font_label, self.font_val = _load_ui_fonts()
+
+        # Clean, high-contrast top bar stats
         self.gesture_text = Text(
             parent=camera.ui,
-            text="🖐️ Neutral / Hover",
-            position=(-0.96, 0.49),
+            text="GESTURE: Neutral / Hover",
+            position=(-0.82, 0.47),
             origin=(-0.5, 0),
-            scale=0.68,
+            scale=0.9,
             color=color.yellow,
             z=0.09,
         )
-        self.fps_text = Text(
+        self.points_text = Text(
             parent=camera.ui,
-            text="FPS: --",
-            position=(0.78, 0.455),
-            origin=(-0.5, 0),
-            scale=0.75,
-            color=color.lime,
+            text="Points: 0",
+            position=(0.0, 0.47),
+            origin=(0, 0),
+            scale=0.95,
+            color=color.white,
             z=0.09,
         )
-        self.cpu_text = Text(
-            parent=camera.ui,
-            text="CPU: --%",
-            position=(0.78, 0.415),
-            origin=(-0.5, 0),
-            scale=0.75,
-            color=color.orange,
-            z=0.09,
+
+        # High-performance telemetry panel with live graphs for FPS, CPU, RAM
+        # Positioned cleanly away from window control buttons
+        initial_img = _render_telemetry_hud(
+            fps=60.0,
+            cpu=15.0,
+            ram=50.0,
+            fps_history=list(self.fps_history),
+            cpu_history=list(self.cpu_history),
+            ram_history=list(self.ram_history),
+            font_label=self.font_label,
+            font_val=self.font_val,
         )
-        self.ram_text = Text(
+        self.perf_tex = Texture(initial_img)
+        self.perf_tex.filtering = True
+        self.perf_panel = Entity(
             parent=camera.ui,
-            text="RAM: --%",
-            position=(0.78, 0.375),
-            origin=(-0.5, 0),
-            scale=0.75,
-            color=color.cyan,
-            z=0.09,
+            model="quad",
+            texture=self.perf_tex,
+            position=(0.52, 0.455),
+            scale=(0.50, 0.07),
+            z=0.08,
         )
 
     @staticmethod
@@ -138,29 +258,37 @@ class NavigationHUD:
     def update(self, env: ExploreEnvironment, gesture: str, dt: float) -> None:
         now = _time.monotonic()
         self.frame_times.append(now)
-        self.cpu_samples.append(psutil.cpu_percent(interval=None))
-        self.ram_samples.append(psutil.virtual_memory().percent)
-        cutoff = now - self.UPDATE_INTERVAL
+        cutoff = now - 1.0
         while self.frame_times and self.frame_times[0] < cutoff:
             self.frame_times.popleft()
-        while self.cpu_samples and len(self.cpu_samples) > len(self.frame_times):
-            self.cpu_samples.popleft()
-        while self.ram_samples and len(self.ram_samples) > len(self.frame_times):
-            self.ram_samples.popleft()
 
         loaded, _ = self._point_count(env)
-        self.points_text.text = f"📊 Loaded Points: {loaded:,}"
-        self.gesture_text.text = gesture
+        self.points_text.text = f"Points: {loaded:,}"
+        clean_gesture = gesture.replace("🖐️", "").replace("🖐", "").replace("👌", "").replace("✌️", "").replace("✌", "").replace("👍", "").strip()
+        self.gesture_text.text = f"GESTURE: {clean_gesture or gesture}"
 
-        if (now - self.last_metrics_update >= self.UPDATE_INTERVAL
-                and len(self.frame_times) > 1):
-            elapsed = self.frame_times[-1] - self.frame_times[0]
-            fps = (len(self.frame_times) - 1) / elapsed if elapsed else 0.0
-            cpu = sum(self.cpu_samples) / len(self.cpu_samples)
-            ram = sum(self.ram_samples) / len(self.ram_samples)
-            self.fps_text.text = f"FPS: {fps:.1f}"
-            self.cpu_text.text = f"CPU: {cpu:.1f}%"
-            self.ram_text.text = f"RAM: {ram:.1f}%"
+        if now - self.last_metrics_update >= self.UPDATE_INTERVAL:
+            elapsed = self.frame_times[-1] - self.frame_times[0] if len(self.frame_times) > 1 else 0.0
+            fps = (len(self.frame_times) - 1) / elapsed if elapsed > 0 else (1.0 / dt if dt > 0 else 60.0)
+            cpu = psutil.cpu_percent(interval=None)
+            ram = psutil.virtual_memory().percent
+
+            self.fps_history.append(fps)
+            self.cpu_history.append(cpu)
+            self.ram_history.append(ram)
+
+            new_img = _render_telemetry_hud(
+                fps=fps,
+                cpu=cpu,
+                ram=ram,
+                fps_history=list(self.fps_history),
+                cpu_history=list(self.cpu_history),
+                ram_history=list(self.ram_history),
+                font_label=self.font_label,
+                font_val=self.font_val,
+            )
+            self.perf_tex._cached_image = new_img
+            self.perf_tex.apply()
             self.last_metrics_update = now
 
 
@@ -210,26 +338,7 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
                 _mp_drawing.draw_landmarks(
                     frame_rgb, hand_lms, _mp_hands.HAND_CONNECTIONS,
                 )
-        frame_image = Image.fromarray(frame_rgb)
-        draw = ImageDraw.Draw(frame_image)
-        if state['Left']['visible'] or state['Right']['visible']:
-            draw.rectangle((4, 4, 620, 100), fill=(0, 0, 0))
-        if state['Left']['visible']:
-            draw.text(
-                (12, 8),
-                f"Left: {gesture_label(state['Left']['gesture'])}",
-                font=emoji_font,
-                fill=(80, 255, 120),
-            )
-        if state['Right']['visible']:
-            draw.text(
-                (12, 52),
-                f"Right: {gesture_label(state['Right']['gesture'])}",
-                font=emoji_font,
-                fill=(80, 255, 120),
-            )
-        frame_rgb = np.asarray(frame_image)
-        # Standalone keeps RGB, resizes to 320x240 (matching original explore.py)
+        # Clean camera preview with landmarks, resized to 320x240
         return cv2.resize(frame_rgb, (320, 240))
 
     # -----------------------------------------------------------------------
@@ -255,53 +364,86 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     _p3d_tex.setMagfilter(P3DTexture.FTLinear)
     _p3d_tex.setMinfilter(P3DTexture.FTLinear)
 
+    # Use clean, bold modern sans-serif font for all Ursina UI text (not thin serif Symbola)
+    for font_cand in (
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ):
+        if os.path.exists(font_cand):
+            Text.default_font = font_cand
+            break
+
     Entity(parent=camera.ui, model='quad', scale=(0.445, 0.315),
-           position=(-0.67, -0.335), color=color.color(0, 0, 0.35), z=0.01)
+           position=(-0.65, -0.32), color=color.color(0, 0, 0.35), z=0.01)
     feed_view = Entity(parent=camera.ui, model='quad', scale=(0.44, 0.31),
-                       position=(-0.67, -0.335))
+                       position=(-0.65, -0.32))
     feed_view.model.setTexture(_p3d_tex)
-    Text("LIVE", position=(-0.67, -0.168), scale=0.9, color=color.red)
+    Text("LIVE", position=(-0.65, -0.14), scale=0.85, color=color.red)
+
     # Legend
     Text(
-        text="<yellow>HAND GESTURES\n\n"
-             "<orange>🫱 RIGHT HAND\n"
-             "<white>🖐️ Open Palm : Neutral / Hover\n"
-             "<white>🤏 Pinch     : Zoom In\n"
-             "<white>✌️ Peace sign : Zoom Out\n"
-             "<white>👍 Thumbs Up : Reset View\n\n"
-             "<white>👈 Hand left  : Rotate Left\n"
-             "<white>👉 Hand right : Rotate Right\n"
-             "<white>☝️ Hand up    : Rotate Up\n"
-             "<white>👇 Hand down  : Rotate Down\n\n"
-             "<cyan>🫲 LEFT HAND\n"
-             "<white>🫴 Move Forward : Hand above center\n"
-             "<white>🫳 Move Backward: Hand below center\n"
-             "<white>🤜 Move Left   : Hand left of center\n"
+        text="<yellow>HAND GESTURES
+
+"
+             "<orange>🫱 RIGHT HAND
+"
+             "<white>🖐️ Open Palm : Neutral / Hover
+"
+             "<white>🤏 Pinch     : Zoom In
+"
+             "<white>✌️ Peace sign : Zoom Out
+"
+             "<white>👍 Thumbs Up : Reset View
+
+"
+             "<white>👈 Hand left  : Rotate Left
+"
+             "<white>👉 Hand right : Rotate Right
+"
+             "<white>☝️ Hand up    : Rotate Up
+"
+             "<white>👇 Hand down  : Rotate Down
+
+"
+             "<cyan>🫲 LEFT HAND
+"
+             "<white>🫴 Move Forward : Hand above center
+"
+             "<white>🫳 Move Backward: Hand below center
+"
+             "<white>🤜 Move Left   : Hand left of center
+"
              "<white>🤛 Move Right  : Hand right of center",
         position=window.top_left + Vec2(0.02, -0.02),
         origin=(-0.5, 0.5), scale=0.8,
     )
-    # Point cloud environment (standalone: ::6 downsample, thickness 4, no reset cooldown)
+
+    # Point cloud environment (thickness and speeds loaded from config/.env)
     print(f"Loading Point Cloud Environment from {target}...")
+    print(f"  [Config] Point Thickness / Size: {config.POINT_THICKNESS}px")
+    print(f"  [Config] Speeds: Flight {config.FLIGHT_SPEED} m/s, Walk {config.WALK_SPEED} m/s, Turn {config.TURN_SPEED}°/s")
     env = ExploreEnvironment(
         target,
         point_cloud=point_cloud,
         downsample_step=1,
-        point_thickness=1.0,
+        point_thickness=config.POINT_THICKNESS,
         reset_cooldown_duration=0.0,
     )
 
     hud = NavigationHUD(max_points=point_cloud.attrs.get("point_count", len(point_cloud))
                         if point_cloud is not None else 0)
 
-    size_status = Text(text="Point Size: 1px [P]", position=(0.3, -0.50),
-                       scale=1.1, color=color.white)
-    chunk_status = Text(text="Streamed: --", position=(0.3, -0.55),
-                        scale=1.0, color=color.lime)
+    # High-contrast bottom status bar with dark backing pill for maximum legibility
+    Entity(parent=camera.ui, model='quad', scale=(1.25, 0.05),
+           position=(0.14, -0.47), color=color.color(0, 0, 0, 0.75), z=0.1)
+
     landmark_status = Text(text="Jump: [1] Academic [2] Labs [3] Plaza [4] Gate",
-                           position=(0.3, -0.60), scale=0.9, color=color.azure)
+                           position=(-0.38, -0.47), scale=0.8, color=color.white, z=0.09)
     rotate_status = Text(text="Rotate: [Arrows] / [J][L] | 360° [T]",
-                         position=(0.3, -0.65), scale=0.9, color=color.azure)
+                         position=(0.24, -0.47), scale=0.8, color=color.yellow, z=0.09)
 
     # -----------------------------------------------------------------------
     # Update loop
@@ -327,18 +469,6 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         env.update_steering(right)
         env.update_movement_and_terrain(left)
 
-        if env.is_chunked:
-            pts_count = sum(c.vertex_count for c in env.loaded_chunks.values())
-            # Count chunks at each LOD level
-            lod_counts = [0, 0, 0]
-            for c in env.loaded_chunks.values():
-                if c.lod_level < 3:
-                    lod_counts[c.lod_level] += 1
-            chunk_status.text = (
-                f"Streamed: {len(env.loaded_chunks)} chunks ({pts_count/1e6:.2f}M pts) "
-                f"LOD: {lod_counts[0]}hi {lod_counts[1]}med {lod_counts[2]}lo"
-            )
-
     # -----------------------------------------------------------------------
     # Input handler
     # -----------------------------------------------------------------------
@@ -346,20 +476,20 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         if key == 'escape' or key == 'q':
             mouse.locked = False
             application.quit()
-        elif key == 'r':
+                elif key == 'r':
             env.reset_player()
             rotate_status.text = "Rotate: [Arrows] / [J][L] | 360° [T]"
-            rotate_status.color = color.azure
+            rotate_status.color = color.yellow
         elif key == 't':
             is_active = env.toggle_auto_rotate()
             rotate_status.text = "Rotate: 360° Turntable ON [T]" if is_active else "Rotate: [Arrows] / [J][L] | 360° [T]"
-            rotate_status.color = color.lime if is_active else color.azure
+            rotate_status.color = color.lime if is_active else color.yellow
         elif key == 'c':
             new_mode = env.cycle_color_mode()
             print(f"Color mode: {new_mode}")
         elif key == 'p':
             new_size = env.cycle_point_thickness()
-            size_status.text = f"Point Size: {new_size} [P]"
+            print(f"[explore] Point thickness: {new_size}")
         elif key == 'f':
             env.is_flying = not env.is_flying
         elif key in ('1', '2', '3', '4'):
