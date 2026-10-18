@@ -61,6 +61,135 @@ def _load_emoji_font(size: int):
         return ImageFont.load_default()
 
 
+def _create_gesture_guide_texture() -> Texture:
+    """Renders a sharp, high-DPI HUD card with large prominent Unicode emojis and bold controls."""
+    width, height = 860, 830
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Deep dark solid backdrop with glowing neon cyan border
+    draw.rounded_rectangle(
+        (4, 4, width - 4, height - 4),
+        radius=22,
+        fill=(8, 14, 24, 248),
+        outline=(0, 225, 255, 235),
+        width=4,
+    )
+
+    # Search best fonts: bold sans-serif for text, large modern emoji font
+    font_paths_bold = (
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+    )
+    font_paths_emoji = (
+        "/usr/share/fonts/google-noto-emoji-fonts/NotoEmoji-Regular.ttf",
+        "/usr/share/fonts/gdouros-symbola/Symbola.ttf",
+    )
+
+    font_title = font_sec = font_item = font_desc = None
+    for p in font_paths_bold:
+        if os.path.exists(p):
+            try:
+                font_title = ImageFont.truetype(p, 40)
+                font_sec = ImageFont.truetype(p, 34)
+                font_item = ImageFont.truetype(p, 28)
+                font_desc = ImageFont.truetype(p, 26)
+                break
+            except Exception:
+                continue
+
+    font_emoji_title = font_emoji_sec = font_emoji_item = None
+    for p in font_paths_emoji:
+        if os.path.exists(p):
+            try:
+                font_emoji_title = ImageFont.truetype(p, 48)
+                font_emoji_sec = ImageFont.truetype(p, 42)
+                font_emoji_item = ImageFont.truetype(p, 42)
+                break
+            except Exception:
+                continue
+
+    if font_title is None:
+        font_title = font_sec = font_item = font_desc = ImageFont.load_default()
+    if font_emoji_item is None:
+        font_emoji_title = font_emoji_sec = font_emoji_item = font_item
+
+    # Load custom palm hand icon if available
+    hand_icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "palm_hand_cropped.png")
+    custom_palm = None
+    custom_palm_left = None
+    if os.path.exists(hand_icon_path):
+        try:
+            raw_hand = Image.open(hand_icon_path).convert("RGBA")
+            h_target = 48
+            w_target = max(1, int(h_target * raw_hand.width / raw_hand.height))
+            custom_palm = raw_hand.resize((w_target, h_target), Image.Resampling.LANCZOS)
+            custom_palm_left = custom_palm.transpose(Image.FLIP_LEFT_RIGHT)
+        except Exception:
+            custom_palm = None
+
+    # Title header
+    draw.text((36, 18), "🎮", font=font_emoji_title, fill=(255, 220, 50, 255))
+    draw.text((100, 22), "HAND GESTURES", font=font_title, fill=(255, 220, 50, 255))
+    draw.line((36, 78, width - 36, 78), fill=(0, 225, 255, 150), width=2)
+
+    # Right Hand Section (With custom high-res palm icon)
+    if custom_palm is not None:
+        img.paste(custom_palm, (40, 92), custom_palm)
+    else:
+        draw.text((36, 94), "✋", font=font_emoji_sec, fill=(255, 160, 50, 255))
+    draw.text((94, 98), "RIGHT HAND", font=font_sec, fill=(255, 160, 50, 255))
+    right_items = [
+        ("🤏", "Pinch", ":  Zoom In"),
+        ("✌", "Peace Sign", ":  Zoom Out"),
+        ("👍", "Thumbs up", ":  Reset view"),
+        ("👈", "Palm Left", ":  Rotate left"),
+        ("👉", "Palm Right", ":  Rotate right"),
+        ("☝", "Palm up", ":  Rotate up"),
+        ("👇", "Palm down", ":  Rotate down"),
+    ]
+    y = 152
+    for icon, name, desc in right_items:
+        draw.text((42, y - 6), icon, font=font_emoji_item, fill=(255, 255, 255, 255))
+        draw.text((105, y), name, font=font_item, fill=(0, 225, 255, 255))
+        draw.text((330, y), desc, font=font_desc, fill=(255, 255, 255, 255))
+        y += 48
+
+    # Left Hand Section (Only requested gestures)
+    y += 8
+    draw.line((36, y, width - 36, y), fill=(0, 225, 255, 80), width=1)
+    y += 14
+    if custom_palm_left is not None:
+        img.paste(custom_palm_left, (40, y - 2), custom_palm_left)
+    else:
+        draw.text((36, y - 6), "✋", font=font_emoji_sec, fill=(0, 225, 255, 255))
+    draw.text((94, y + 4), "LEFT HAND", font=font_sec, fill=(0, 225, 255, 255))
+    y += 52
+    left_items = [
+        ("⬆", "Move Forward", ":  Hand Above Center"),
+        ("⬇", "Move Backward", ":  Hand Below Center"),
+        ("⬅", "Move Left", ":  Hand Left Center"),
+        ("➡", "Move Right", ":  Hand Right Center"),
+    ]
+    for icon, name, desc in left_items:
+        draw.text((42, y - 6), icon, font=font_emoji_item, fill=(255, 255, 255, 255))
+        draw.text((105, y), name, font=font_item, fill=(0, 225, 255, 255))
+        draw.text((400, y), desc, font=font_desc, fill=(255, 255, 255, 255))
+        y += 48
+
+    # Footer controls
+    y += 10
+    draw.line((36, y, width - 36, y), fill=(0, 220, 255, 120), width=2)
+    y += 16
+    draw.text((36, y), "[H] Hide/Show Guide  •  [C] Color Palette", font=font_desc, fill=(160, 215, 255, 255))
+
+    tex = Texture(img)
+    tex.filtering = True
+    return tex
+
+
 def _load_ui_fonts() -> Tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
     """Load bold sans-serif fonts for telemetry HUD."""
     font_paths = (
@@ -383,42 +512,14 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     feed_view.model.setTexture(_p3d_tex)
     Text("LIVE", position=(-0.65, -0.14), scale=0.85, color=color.red)
 
-    # Legend
-    Text(
-        text="<yellow>HAND GESTURES
-
-"
-             "<orange>🫱 RIGHT HAND
-"
-             "<white>🖐️ Open Palm : Neutral / Hover
-"
-             "<white>🤏 Pinch     : Zoom In
-"
-             "<white>✌️ Peace sign : Zoom Out
-"
-             "<white>👍 Thumbs Up : Reset View
-
-"
-             "<white>👈 Hand left  : Rotate Left
-"
-             "<white>👉 Hand right : Rotate Right
-"
-             "<white>☝️ Hand up    : Rotate Up
-"
-             "<white>👇 Hand down  : Rotate Down
-
-"
-             "<cyan>🫲 LEFT HAND
-"
-             "<white>🫴 Move Forward : Hand above center
-"
-             "<white>🫳 Move Backward: Hand below center
-"
-             "<white>🤜 Move Left   : Hand left of center
-"
-             "<white>🤛 Move Right  : Hand right of center",
-        position=window.top_left + Vec2(0.02, -0.02),
-        origin=(-0.5, 0.5), scale=0.8,
+    # Crisp, large-format gesture HUD card with prominent emojis and high-contrast typography
+    gesture_guide = Entity(
+        parent=camera.ui,
+        model='quad',
+        texture=_create_gesture_guide_texture(),
+        scale=(0.48, 0.46),
+        position=(-0.64, 0.135),
+        z=0.05,
     )
 
     # Point cloud environment (thickness and speeds loaded from config/.env)
@@ -476,7 +577,9 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         if key == 'escape' or key == 'q':
             mouse.locked = False
             application.quit()
-                elif key == 'r':
+        elif key == 'h':
+            gesture_guide.enabled = not gesture_guide.enabled
+        elif key == 'r':
             env.reset_player()
             rotate_status.text = "Rotate: [Arrows] / [J][L] | 360° [T]"
             rotate_status.color = color.yellow
