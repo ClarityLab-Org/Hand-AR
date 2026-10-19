@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+from typing import Optional
 import laspy
 import numpy as np
 
@@ -62,15 +63,35 @@ def _create_architectural_palette(y_elev: np.ndarray, raw_r: np.ndarray, raw_g: 
 
 
 def build_spatial_chunks(
-    laz_path: str = "iitj_data/pointcloud.laz",
-    output_dir: str = "models/iitj_chunks",
+    laz_path: Optional[str] = None,
+    output_dir: Optional[str] = None,
     cell_size: float = 35.0,
-    chunk_stream_size: int = 1_000_000,
+    chunk_stream_size: int = 5_000_000,
+    target_total_points: int = 18_000_000,
     overview_target: int = 120_000,
 ) -> None:
     """Streams a LiDAR file, centers coordinate space, and partitions into spatial grid chunks."""
+    if laz_path is None:
+        # Search for .laz/.las files in project directories, newest first
+        candidates = []
+        for search_dir in ["iitj_data", "models", "."]:
+            if os.path.exists(search_dir):
+                for f in os.listdir(search_dir):
+                    if f.lower().endswith((".laz", ".las")):
+                        candidates.append(os.path.join(search_dir, f))
+        if candidates:
+            candidates.sort(key=lambda p: (0 if "new" in os.path.basename(p).lower() else (1 if "pointcloud" in os.path.basename(p).lower() else 2), -os.path.getmtime(p)))
+            laz_path = candidates[0]
+            print(f" Auto-detected LiDAR file: {laz_path}")
+        else:
+            raise FileNotFoundError("No .laz or .las file found in iitj_data, models, or current directory.")
+
     if not os.path.exists(laz_path):
         raise FileNotFoundError(f"Source file not found: {laz_path}")
+
+    from pathlib import Path
+    if output_dir is None:
+        output_dir = os.path.join("models", f"{Path(laz_path).stem}_chunks")
 
     os.makedirs(output_dir, exist_ok=True)
     start_time = time.time()
@@ -85,11 +106,12 @@ def build_spatial_chunks(
 
     with laspy.open(laz_path) as reader:
         has_color = hasattr(reader.header.point_format, 'red') or 'red' in reader.header.point_format.dimension_names
+        total_in_file = reader.header.point_count
+        step = max(1, int(round(total_in_file / target_total_points))) if total_in_file > target_total_points else 1
+        print(f" Dataset total points: {total_in_file:,} (sampling stride: 1 in {step})")
 
         try:
             for chunk in reader.chunk_iterator(chunk_stream_size):
-                # Subsample 1 in 3 for maximum density on buildings
-                step = 3
                 cx = np.array(chunk.x[::step], dtype=np.float32)
                 cy = np.array(chunk.y[::step], dtype=np.float32)
                 cz = np.array(chunk.z[::step], dtype=np.float32)
@@ -111,13 +133,11 @@ def build_spatial_chunks(
                     raw_b_list.append((rb * scale).astype(np.uint8))
 
                 total_read += len(chunk)
-                print(f"   Read {total_read:,} raw LiDAR points...", end="\r", flush=True)
-                if total_read >= 20_500_000:
-                    print(f"\n   Reached partition threshold ({total_read:,} points).")
-                    break
+                pct = (total_read / total_in_file) * 100 if total_in_file else 100.0
+                print(f"   Read {total_read:,} / {total_in_file:,} LiDAR points ({pct:.1f}%)...", end="\r", flush=True)
 
         except Exception as e:
-            print(f"\n   Reached file boundary after {total_read:,} points ({e}).")
+            print(f"\n   Stream ended: {e}")
 
     print("\n Computing campus centering and architectural elevation...")
     raw_x = np.concatenate(raw_x_list)
@@ -129,12 +149,12 @@ def build_spatial_chunks(
     ursina_x = raw_x - float(np.mean(raw_x))
     ursina_z = raw_y - float(np.mean(raw_y))
 
-    # Calculate true ground elevation baseline (10th percentile)
-    ground_baseline = float(np.percentile(raw_z, 10))
+    # Calculate true ground elevation baseline (5th percentile)
+    ground_baseline = float(np.percentile(raw_z, 5))
     ursina_y = np.maximum(0.0, raw_z - ground_baseline)
 
-    # Filter out sky noise / flying artifacts > 30m above ground
-    valid_mask = ursina_y < 25.0
+    # Filter out high sky noise (> 80m above ground) and subsurface anomalies
+    valid_mask = (ursina_y >= 0.0) & (ursina_y < 80.0)
     ursina_x = ursina_x[valid_mask]
     ursina_y = ursina_y[valid_mask]
     ursina_z = ursina_z[valid_mask]
@@ -267,6 +287,9 @@ def build_spatial_chunks(
 
     manifest = {
         "dataset": "IIT Jodhpur Campus LiDAR",
+        "source_file": os.path.basename(laz_path),
+        "source_mtime": os.path.getmtime(laz_path),
+        "source_path": os.path.abspath(laz_path),
         "cell_size": cell_size,
         "total_points": total_dense_points,
         "overview_points": len(ov_verts),
@@ -291,4 +314,17 @@ def build_spatial_chunks(
 
 
 if __name__ == "__main__":
-    build_spatial_chunks()
+    import argparse
+    parser = argparse.ArgumentParser(description="Partition LiDAR .laz into spatial grid chunks for smooth 60 FPS streaming")
+    parser.add_argument("laz_path", nargs="?", default=None, help="Path to input .laz file (auto-detects if omitted)")
+    parser.add_argument("--output", "-o", default=None, help="Output chunks directory")
+    parser.add_argument("--cell-size", type=float, default=35.0, help="Grid cell size in meters (default: 35.0)")
+    parser.add_argument("--target-points", type=int, default=18_000_000, help="Target total points sampled across entire dataset")
+    cli_args = parser.parse_args()
+
+    build_spatial_chunks(
+        laz_path=cli_args.laz_path,
+        output_dir=cli_args.output,
+        cell_size=cli_args.cell_size,
+        target_total_points=cli_args.target_points,
+    )

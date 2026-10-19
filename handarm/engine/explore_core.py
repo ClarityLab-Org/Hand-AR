@@ -261,9 +261,10 @@ class ExploreEnvironment:
             candidates = []
             if isinstance(target_path, str):
                 candidates.extend([
-                    os.path.join(os.path.dirname(target_path), "iitj_chunks"),
-                    os.path.join(os.path.dirname(target_path), "chunks"),
+                    os.path.join("models", f"{Path(target_path).stem}_chunks"),
                     os.path.join(os.path.dirname(target_path), f"{Path(target_path).stem}_chunks"),
+                    os.path.join(os.path.dirname(target_path), "chunks"),
+                    os.path.join(os.path.dirname(target_path), "iitj_chunks"),
                 ])
             candidates.extend([
                 os.path.join("models", "iitj_chunks"),

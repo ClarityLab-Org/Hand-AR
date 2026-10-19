@@ -24,6 +24,7 @@ Controls:
 """
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -80,6 +81,19 @@ Examples:
         action="store_true",
         help="Explicitly allow viewing decoded prefix data; never caches it",
     )
+    parser.add_argument(
+        "--rebuild-chunks", "-f",
+        action="store_true",
+        default=False,
+        help="Force rebuilding dynamic spatial chunks from source LiDAR file even if chunks exist"
+    )
+    parser.add_argument(
+        "--chunks-dir",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="Explicit directory containing pre-built dynamic spatial chunks"
+    )
 
     args = parser.parse_args()
 
@@ -100,6 +114,14 @@ Examples:
                         candidates.append(os.path.join(search_dir, f))
 
         if candidates:
+            # Prioritize files with 'new' in name, then 'pointcloud', then newest modification time
+            def _candidate_score(p):
+                base = os.path.basename(p).lower()
+                mtime = os.path.getmtime(p)
+                prio = 0 if "new" in base else (1 if "pointcloud" in base else 2)
+                return (prio, -mtime)
+
+            candidates.sort(key=_candidate_score)
             laz_path = candidates[0]
             print(f" Auto-detected LiDAR file: {laz_path}")
         else:
@@ -127,34 +149,47 @@ Examples:
         sys.exit(1)
 
     # Determine if pre-partitioned dynamic spatial chunks exist
-    chunks_dir = None
-    if not args.single_mesh:
+    chunks_dir = args.chunks_dir
+    if not args.single_mesh and chunks_dir is None and not args.rebuild_chunks:
+        stem = Path(laz_path).stem
         candidate_chunk_dirs = [
+            os.path.join("models", f"{stem}_chunks"),
+            os.path.join(os.path.dirname(laz_path), f"{stem}_chunks"),
             os.path.join("models", "iitj_chunks"),
-            os.path.join(os.path.dirname(laz_path), f"{Path(laz_path).stem}_chunks"),
-            os.path.join("models", f"{Path(laz_path).stem}_chunks"),
             os.path.join(os.path.dirname(laz_path), "chunks"),
         ]
         for cdir in candidate_chunk_dirs:
-            if os.path.isdir(cdir) and os.path.exists(os.path.join(cdir, "manifest.json")):
+            manifest_file = os.path.join(cdir, "manifest.json")
+            if os.path.isdir(cdir) and os.path.exists(manifest_file):
                 has_npz = any(f.endswith(".npz") and f != "overview.npz" for f in os.listdir(cdir))
-                if has_npz:
-                    chunks_dir = cdir
-                    break
+                if not has_npz:
+                    continue
+                try:
+                    with open(manifest_file, "r") as mf:
+                        mdata = json.load(mf)
+                        src = mdata.get("source_file")
+                        # If manifest declares its source file, verify it matches current target
+                        if src and os.path.basename(src).lower() != os.path.basename(laz_path).lower():
+                            continue
+                        # If chunks are older than the laz file and directory doesn't match stem, skip
+                        if os.path.getmtime(laz_path) > os.path.getmtime(manifest_file) and os.path.basename(cdir) != f"{stem}_chunks":
+                            continue
+                except Exception:
+                    pass
+                chunks_dir = cdir
+                break
 
-        if chunks_dir is None:
-            # Auto-generate dynamic spatial chunks for instant subsequent launches and smooth 60 FPS
-            print("=" * 65)
-            print("  Building Dynamic Spatial Chunks for Smooth 60 FPS Streaming...")
-            print(f" Source:  {laz_path}")
-            target_chunks_dir = os.path.join("models", f"{Path(laz_path).stem}_chunks")
-            if "iitj" in laz_path.lower():
-                target_chunks_dir = os.path.join("models", "iitj_chunks")
-            print(f" Target:  {target_chunks_dir}")
-            print("=" * 65)
-            from scripts.build_spatial_chunks import build_spatial_chunks
-            build_spatial_chunks(laz_path=laz_path, output_dir=target_chunks_dir)
-            chunks_dir = target_chunks_dir
+    if not args.single_mesh and chunks_dir is None:
+        # Auto-generate dynamic spatial chunks for instant subsequent launches and smooth 60 FPS
+        print("=" * 65)
+        print("  Building Dynamic Spatial Chunks for Smooth 60 FPS Streaming...")
+        print(f" Source:  {laz_path}")
+        target_chunks_dir = os.path.join("models", f"{Path(laz_path).stem}_chunks")
+        print(f" Target:  {target_chunks_dir}")
+        print("=" * 65)
+        from scripts.build_spatial_chunks import build_spatial_chunks
+        build_spatial_chunks(laz_path=laz_path, output_dir=target_chunks_dir)
+        chunks_dir = target_chunks_dir
 
     if chunks_dir is not None:
         print("=" * 65)
@@ -165,7 +200,7 @@ Examples:
         print("=" * 65)
         from handarm.engine.explore_standalone import main as explore_main
         explore_main(target_path=chunks_dir)
-        return
+        return 0
 
     # Fallback legacy single-mesh mode (when explicitly requested with --single-mesh)
     print("=" * 65)
