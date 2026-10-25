@@ -61,11 +61,22 @@ def _btn_hover(btn: tk.Button, normal_bg: str, hover_bg: str,
     btn.bind("<Leave>", lambda e: btn.config(bg=normal_bg, fg=normal_fg))
 
 
-def _make_toplevel(parent: tk.Widget, title: str, w: int, h: int) -> tk.Toplevel:
+def _make_toplevel(
+    parent: tk.Widget, title: str, w: int, h: int, *, transient: bool = True
+) -> tk.Toplevel:
     """Creates and configures a styled top-level modal window."""
+    parent.update_idletasks()
+    w = min(w, max(320, parent.winfo_screenwidth() - 40))
+    h = min(h, max(240, parent.winfo_screenheight() - 80))
     win = tk.Toplevel(parent)
     win.title(title)
-    win.geometry(f"{w}x{h}")
+    if transient:
+        win.transient(parent)
+    x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+    y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+    x = max(0, min(x, parent.winfo_screenwidth() - w))
+    y = max(0, min(y, parent.winfo_screenheight() - h))
+    win.geometry(f"{w}x{h}+{x}+{y}")
     win.configure(bg=BG)
     win.resizable(False, False)
     win.grab_set()
@@ -191,6 +202,88 @@ def launch_ursina(model_path: str, mode: str) -> None:
                      cwd=PROJECT_DIR)
 
 
+def _default_model_path() -> str | None:
+    """Choose a stable local model for point-cloud explorer launches."""
+    models_dir = os.path.join(PROJECT_DIR, "models")
+    preferred = os.path.join(models_dir, "Old_Rusty_Car.glb")
+    if os.path.isfile(preferred):
+        return preferred
+
+    candidates = []
+    for current, _, files in os.walk(models_dir):
+        candidates.extend(
+            os.path.join(current, name)
+            for name in files
+            if os.path.splitext(name)[1].lower() in (".obj", ".bam", ".glb")
+        )
+    return min(candidates, key=str.casefold) if candidates else None
+
+
+def _local_data_assets(query: str = "") -> list:
+    """Find local point clouds, chunk datasets, and models in the data folders."""
+    assets = []
+    query = query.casefold()
+    for folder in ("iitj_data", "models"):
+        base_dir = os.path.join(PROJECT_DIR, folder)
+        if not os.path.isdir(base_dir):
+            continue
+
+        for current, dirs, files in os.walk(base_dir):
+            chunk_files = [
+                name for name in files
+                if name.endswith(".npz") and name != "overview.npz"
+            ]
+            if "manifest.json" in files and chunk_files:
+                name = os.path.basename(current)
+                if not query or query in name.casefold():
+                    assets.append({
+                        "name": name,
+                        "path": current,
+                        "source": "local",
+                        "mode": "explore",
+                        "kind": "asset",
+                        "asset_type": "CHUNKED POINT CLOUD",
+                        "location": folder,
+                    })
+                dirs[:] = []
+                continue
+
+            dirs[:] = [name for name in dirs if name not in ("cache", "__pycache__")]
+            for name in files:
+                extension = os.path.splitext(name)[1].lower()
+                if extension not in (".laz", ".las", ".csv", ".glb", ".obj", ".bam"):
+                    continue
+                if query and query not in name.casefold():
+                    continue
+                is_model = extension in (".glb", ".obj", ".bam")
+                assets.append({
+                    "name": name,
+                    "path": os.path.join(current, name),
+                    "source": "local",
+                    "mode": "inspect" if is_model else "explore",
+                    "kind": "asset",
+                    "asset_type": extension[1:].upper(),
+                    "location": folder,
+                })
+
+    return sorted(assets, key=lambda asset: (asset["name"].casefold(), asset["location"]))
+
+
+def _launch_local_asset(path: str, mode: str) -> None:
+    """Launch a selected local point cloud or 3D model."""
+    if mode == "explore":
+        explore_file = os.path.join(PROJECT_DIR, "explore.py")
+        command = [sys.executable, explore_file, path]
+        model_path = _default_model_path()
+        if model_path:
+            command.extend(["--model-path", model_path])
+        else:
+            print("Warning: no local .obj, .bam, or .glb model found; launching point cloud only.")
+        subprocess.Popen(command, cwd=PROJECT_DIR)
+    else:
+        launch_ursina(path, mode)
+
+
 def load_laz_for_gui(parent: tk.Misc, laz_path: str, **kwargs):
     """Load a LAZ file and turn decode failures into an actionable dialog."""
     from handarm.geometry.laz_loader import load_laz_to_dataframe
@@ -213,18 +306,36 @@ def load_laz_for_gui(parent: tk.Misc, laz_path: str, **kwargs):
 # ---------------------------------------------------------------------------
 
 def open_model_selector(root: tk.Tk) -> None:
-    """Opens the model selection modal allowing search, download, and launch."""
-    if not os.path.exists(MODELS_DIR):
-        messagebox.showerror("Error", "models/ folder not found")
+    """Opens a selector for local data and downloadable 3D models."""
+    data_dir = os.path.join(PROJECT_DIR, "iitj_data")
+    if not os.path.isdir(MODELS_DIR) and not os.path.isdir(data_dir):
+        messagebox.showerror("Error", "Neither iitj_data/ nor models/ folder was found")
         return
 
-    win = _make_toplevel(root, "Select Model", 460, 520)
+    win = _make_toplevel(root, "Select Data or Model", 700, 640, transient=False)
+    root.withdraw()
+
+    def _center_selector() -> None:
+        win.update_idletasks()
+        x = max(0, (win.winfo_screenwidth() - win.winfo_width()) // 2)
+        y = max(0, (win.winfo_screenheight() - win.winfo_height()) // 2)
+        win.geometry(f"+{x}+{y}")
+
+    win.after(150, _center_selector)
+
+    def _close_selector() -> None:
+        if win.winfo_exists():
+            win.destroy()
+        root.deiconify()
+
+    win.protocol("WM_DELETE_WINDOW", _close_selector)
+    win.bind("<Escape>", lambda _event: _close_selector())
 
     hdr = tk.Frame(win, bg=PANEL, pady=0)
     hdr.pack(fill="x")
-    tk.Label(hdr, text="// SELECT MODEL", fg=ACCENT, bg=PANEL,
+    tk.Label(hdr, text="// LOCAL DATA + MODELS", fg=ACCENT, bg=PANEL,
              font=FONT_HDR, padx=20, pady=14).pack(side="left")
-    tk.Label(hdr, text=".glb  .obj", fg=TEXT_DIM, bg=PANEL,
+    tk.Label(hdr, text="LAZ LAS CSV GLB OBJ", fg=TEXT_DIM, bg=PANEL,
              font=FONT_MONO).pack(side="right", padx=20)
     tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
 
@@ -234,7 +345,7 @@ def open_model_selector(root: tk.Tk) -> None:
     tk.Label(search_frame, text="QUERY >", fg=ACCENT, bg=BG2,
              font=FONT_MONO).pack(side="left", padx=(0, 8))
 
-    search_var = tk.StringVar(value="car")
+    search_var = tk.StringVar(value="")
     search_entry = tk.Entry(
         search_frame, textvariable=search_var,
         bg=PANEL, fg=TEXT, insertbackground=ACCENT,
@@ -255,7 +366,8 @@ def open_model_selector(root: tk.Tk) -> None:
 
     tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
 
-    status = tk.Label(win, text="Enter a query and press SEARCH ...", fg=TEXT_DIM,
+    status = tk.Label(win, text="Local data listed below; enter a query to search online.",
+                      fg=TEXT_DIM,
                       bg=BG2, font=FONT_MONO, anchor="w", padx=16, pady=6)
     status.pack(fill="x")
 
@@ -266,10 +378,14 @@ def open_model_selector(root: tk.Tk) -> None:
     sb = tk.Scrollbar(outer, orient="vertical", command=canvas_list.yview,
                       bg=BG, troughcolor=BG2, width=8)
     inner = tk.Frame(canvas_list, bg=BG)
+    list_window = canvas_list.create_window((0, 0), window=inner, anchor="nw")
 
     inner.bind("<Configure>",
                lambda e: canvas_list.configure(scrollregion=canvas_list.bbox("all")))
-    canvas_list.create_window((0, 0), window=inner, anchor="nw")
+    canvas_list.bind(
+        "<Configure>",
+        lambda e: canvas_list.itemconfigure(list_window, width=e.width),
+    )
     canvas_list.configure(yscrollcommand=sb.set)
     canvas_list.pack(side="left", fill="both", expand=True)
     sb.pack(side="right", fill="y")
@@ -317,6 +433,13 @@ def open_model_selector(root: tk.Tk) -> None:
 
     def _make_click(m, r):
         def on_click(e):
+            if m.get("kind") == "asset":
+                path = m["path"]
+                mode = m["mode"]
+                _close_selector()
+                _launch_local_asset(path, mode)
+                return
+
             search_btn.config(state="disabled")
             status.config(text=f"Downloading  {m['name']} ...", fg=ORANGE)
             win.update_idletasks()
@@ -333,7 +456,7 @@ def open_model_selector(root: tk.Tk) -> None:
                     if not os.path.exists(path):
                         messagebox.showerror("Error", f"File not found:\n{path}")
                         return
-                    win.destroy()
+                    _close_selector()
                     mode = m.get("mode", "inspect")
                     print(f"Launching {mode.upper()} Mode:", path)
                     launch_ursina(path, mode)
@@ -371,8 +494,10 @@ def open_model_selector(root: tk.Tk) -> None:
                 continue
 
             name = model["name"]
-            ext = (os.path.splitext(name)[1].upper()
-                   if model["source"] == "local" else "[WEB]")
+            ext = (
+                model.get("asset_type", os.path.splitext(name)[1].upper())
+                if model["source"] == "local" else "[WEB]"
+            )
             ext_color = GREEN if model["source"] == "local" else ACCENT
 
             row = tk.Frame(inner, bg=PANEL, pady=0, cursor="hand2")
@@ -388,8 +513,9 @@ def open_model_selector(root: tk.Tk) -> None:
             info.pack(side="left", fill="both", expand=True, padx=4, pady=6)
             tk.Label(info, text=name, fg=TEXT, bg=PANEL,
                      font=("Courier New", 10, "bold"), anchor="w").pack(fill="x")
-            tk.Label(info, text=ext, fg=ext_color, bg=PANEL,
-                     font=FONT_MONO, anchor="w").pack(fill="x")
+            tk.Label(info, text=f"{model.get('location', '')}  {ext}".strip(),
+                     fg=ext_color, bg=PANEL, font=FONT_MONO,
+                     anchor="w").pack(fill="x")
 
             arrow = tk.Label(row, text="  LOAD  >", fg=TEXT_DIM, bg=PANEL,
                              font=FONT_BTN_SM, padx=12)
@@ -408,28 +534,32 @@ def open_model_selector(root: tk.Tk) -> None:
 
     def _do_search():
         query = search_var.get().strip()
-        if not query:
-            return
-        status.config(text=f'Searching for  "{query}" ...', fg=ACCENT)
-        search_btn.config(state="disabled")
-        win.update_idletasks()
-
-        try:
-            results = unified_search(MODELS_DIR, query=query, use_cache=False)
-        except Exception as ex:
-            status.config(text=f"Search error: {ex}", fg=ORANGE)
+        web_results = []
+        if query:
+            status.config(text=f'Searching local data and web for "{query}" ...', fg=ACCENT)
+            search_btn.config(state="disabled")
+            win.update_idletasks()
+            try:
+                web_results = [
+                    item for item in unified_search(
+                        MODELS_DIR, query=query, use_cache=False
+                    )
+                    if item["source"] == "web"
+                ]
+            except Exception as ex:
+                status.config(text=f"Search error: {ex}", fg=ORANGE)
+                search_btn.config(state="normal")
+                return
             search_btn.config(state="normal")
-            return
 
-        search_btn.config(state="normal")
-        _populate(results)
+        _populate(_local_data_assets(query) + web_results)
 
     search_btn.config(command=_do_search)
     search_entry.bind("<Return>", lambda e: _do_search())
     win.after(50, _do_search)
 
     tk.Frame(win, bg=BORDER, height=1).pack(fill="x")
-    tk.Label(win, text="Click a model to download & launch the viewer",
+    tk.Label(win, text="Click local data to open it, or a web result to download",
              fg=TEXT_DIM, bg=BG, font=FONT_MONO, pady=8).pack()
 
 
@@ -496,11 +626,8 @@ def show_controls(root: tk.Tk) -> None:
 
 
 def _count_models() -> int:
-    """Counts available 3D model/point cloud files in models/ folder."""
-    if os.path.exists(MODELS_DIR):
-        return len([f for f in os.listdir(MODELS_DIR)
-                    if f.lower().endswith((".glb", ".obj", ".csv"))])
-    return 0
+    """Counts available local assets in iitj_data/ and models/."""
+    return len(_local_data_assets())
 
 
 # ---------------------------------------------------------------------------
@@ -511,7 +638,7 @@ def main() -> None:
     """Main entry point for the GUI launcher."""
     root = tk.Tk()
     root.title("3D Interaction Controller")
-    root.geometry("620x420")
+    root.geometry("700x480")
     root.configure(bg=BG)
     root.resizable(False, False)
 
@@ -588,13 +715,13 @@ def main() -> None:
     dot_color = GREEN if n_models > 0 else ORANGE
     tk.Label(status_row, text="●", fg=dot_color, bg=BG,
              font=("Courier New", 10)).pack(side="left")
-    tk.Label(status_row, text=f"  {n_models} model(s) in models/",
+    tk.Label(status_row, text=f"  {n_models} local data/model asset(s)",
              fg=TEXT_DIM, bg=BG, font=FONT_MONO).pack(side="left")
 
     tk.Frame(root, bg=BORDER, height=1).pack(fill="x")
     foot = tk.Frame(root, bg=BG2, pady=6)
     foot.pack(fill="x")
-    tk.Label(foot, text="Place .glb or .obj files in the models/ folder",
+    tk.Label(foot, text="Browse point clouds in iitj_data/ and models/",
              fg=TEXT_MUTE, bg=BG2, font=FONT_MONO).pack(side="left", padx=16)
     tk.Label(foot, text="[  READY  ]", fg=GREEN, bg=BG2,
              font=FONT_MONO).pack(side="right", padx=16)

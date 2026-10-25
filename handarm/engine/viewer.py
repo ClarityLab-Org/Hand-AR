@@ -20,14 +20,15 @@ import psutil
 import sys
 import time as _time
 
-from panda3d.core import Texture as P3DTexture, Filename
+from panda3d.core import Filename, Texture as P3DTexture, loadPrcFileData
 from ursina import *
 from ursina.prefabs.first_person_controller import FirstPersonController
 
 from handarm import config
 from handarm.geometry.alignment import auto_align_up_axis
 from handarm.engine.ui_common import (
-    CameraFeedUI, PerformanceUI, InitOverlay, draw_skeletons,
+    WINDOW_SIZE, CameraFeedUI, PerformanceUI, InitOverlay, draw_skeletons,
+    safe_set_text,
 )
 from handarm.tracking.gestures import (
     is_open_palm_relaxed, is_peace, is_pinch, pinch_distance,
@@ -61,7 +62,7 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # Ursina app
     # -----------------------------------------------------------------------
-    app = Ursina()
+    app = Ursina(size=WINDOW_SIZE, development_mode=False)
     window.color = color.color(0, 0, 0.08)
     os.makedirs(config.SCREENSHOT_DIR, exist_ok=True)
 
@@ -107,6 +108,8 @@ def main() -> None:
             car.set_render_mode_perspective(False)
         else:
             panda_path = Filename.from_os_specific(model_path)
+            # The viewer does not play asset animations; skip problematic GLB animation buffers.
+            loadPrcFileData("", "gltf-skip-animations 1")
             loaded = base.loader.load_model(panda_path)
             if loaded is None:
                 sys.exit(1)
@@ -133,7 +136,7 @@ def main() -> None:
 
         def toggle_model_lock() -> None:
             s.model_locked = not s.model_locked
-            model_btn.text = f"Model Lock: {'ON' if s.model_locked else 'OFF'}"
+            safe_set_text(model_btn, f"Model Lock: {'ON' if s.model_locked else 'OFF'}")
             model_btn.color = (color.color(0, 0, 0.30) if s.model_locked
                                else color.color(0, 0, 0.20))
 
@@ -363,7 +366,7 @@ def main() -> None:
                     _full_motion_reset()
                 draw_skeletons(display_frame, res, init_overlay.registered_hands)
                 cam_feed.upload_frame(display_frame)
-                gesture_text.text = f"Init: {init_overlay.state.upper()}"
+                safe_set_text(gesture_text, f"Init: {init_overlay.state.upper()}")
                 gesture_text.color = color.orange
                 return
 
@@ -379,14 +382,14 @@ def main() -> None:
                 if init_overlay.lost_frames >= InitOverlay.LOST_GRACE_FRAMES:
                     init_overlay.reset(motion_reset_fn=_full_motion_reset)
                     cam_feed.upload_frame(display_frame)
-                    gesture_text.text = "Gesture: None"
+                    safe_set_text(gesture_text, "Gesture: None")
                     gesture_text.color = color.white
                     return
             else:
                 init_overlay.lost_frames = 0
 
             if init_overlay.lost_frames > 0:
-                gesture_text.text = (
+                safe_set_text(gesture_text,
                     f"Hand lost! Re-init in "
                     f"{InitOverlay.LOST_GRACE_FRAMES - init_overlay.lost_frames}..."
                 )
@@ -507,7 +510,7 @@ def main() -> None:
                     s.last_lx = s.last_ly = None
 
             if init_overlay.lost_frames == 0:
-                gesture_text.text = f"Gesture: {current_gest}"
+                safe_set_text(gesture_text, f"Gesture: {current_gest}")
                 gesture_text.color = color.red if s.paused else color.white
             draw_skeletons(display_frame, res, init_overlay.registered_hands)
             if s.paused:
@@ -544,23 +547,29 @@ def main() -> None:
                 return
 
             # Status text updates
-            left_status.text = (f"Left: {left['gesture']}"
-                                if left['visible'] else "Left: Not Detected")
-            right_status.text = (f"Right: {right['gesture']}"
-                                 if right['visible'] else "Right: Not Detected")
+            safe_set_text(
+                left_status,
+                f"Left: {left['gesture']}" if left['visible'] else "Left: Not Detected",
+            )
+            safe_set_text(
+                right_status,
+                f"Right: {right['gesture']}" if right['visible'] else "Right: Not Detected",
+            )
 
             # Steering + movement
             env.update_steering(right)
             env.update_movement_and_terrain(left)
 
             # Flight status display
-            flight_status.text = ("Mode: Flying" if env.is_flying
-                                  else "Mode: Grounded")
+            safe_set_text(flight_status, "Mode: Flying" if env.is_flying else "Mode: Grounded")
             flight_status.color = color.red if env.is_flying else color.green
 
             if env.is_chunked:
                 pts_count = sum(len(c.vertices) for c in env.loaded_chunks.values())
-                chunk_status.text = f"Streamed: {len(env.loaded_chunks)} chunks ({pts_count/1e6:.1f}M pts)"
+                safe_set_text(
+                    chunk_status,
+                    f"Streamed: {len(env.loaded_chunks)} chunks ({pts_count/1e6:.1f}M pts)",
+                )
 
     # -----------------------------------------------------------------------
     # Input handler
@@ -575,11 +584,11 @@ def main() -> None:
         elif key == 'c':
             if viewer_mode == "explore" and env:
                 new_mode = env.cycle_color_mode()
-                color_status.text = f"Color: {new_mode} [C]"
+                safe_set_text(color_status, f"Color: {new_mode} [C]")
         elif key == 'p':
             if viewer_mode == "explore" and env:
                 new_size = env.cycle_point_thickness()
-                size_status.text = f"Point Size: {new_size} [P]"
+                safe_set_text(size_status, f"Point Size: {new_size} [P]")
         elif key == 'f':
             if viewer_mode == "explore" and env:
                 env.is_flying = not env.is_flying
@@ -590,7 +599,7 @@ def main() -> None:
             if viewer_mode == "explore" and env:
                 name = env.jump_to_landmark(int(key) - 1)
                 if name:
-                    landmark_status.text = f"At: {name} [{key}]"
+                    safe_set_text(landmark_status, f"At: {name} [{key}]")
 
     # -----------------------------------------------------------------------
     # Register with Ursina's __main__ discovery

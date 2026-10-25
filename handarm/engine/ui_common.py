@@ -5,6 +5,8 @@ Provides camera feed rendering, performance monitoring overlay,
 hand-registration initialization overlay, and skeleton drawing.
 """
 
+from typing import Optional
+
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -12,6 +14,20 @@ from panda3d.core import Texture as P3DTexture
 from ursina import Entity, Text, camera, color
 
 from handarm import config
+
+WINDOW_SIZE = (1600, 900)
+
+
+def safe_set_text(widget: Optional[Entity], value: str) -> None:
+    """Set entity text only while its Panda node is alive and the value changed."""
+    if widget is None:
+        return
+    try:
+        if widget.isEmpty() or widget.text == value:
+            return
+        widget.text = value
+    except (AssertionError, AttributeError, RuntimeError):
+        return
 
 
 # ---------------------------------------------------------------------------
@@ -149,9 +165,9 @@ class PerformanceUI:
 
     def update(self, fps: int, cpu: float, ram: float) -> None:
         """Updates the performance text values."""
-        self.fps_text.text = f"FPS: {fps}"
-        self.cpu_text.text = f"CPU: {cpu:.0f}%"
-        self.ram_text.text = f"RAM: {ram:.0f}%"
+        safe_set_text(self.fps_text, f"FPS: {fps}")
+        safe_set_text(self.cpu_text, f"CPU: {cpu:.0f}%")
+        safe_set_text(self.ram_text, f"RAM: {ram:.0f}%")
 
 
 # ---------------------------------------------------------------------------
@@ -224,9 +240,9 @@ class InitOverlay:
             motion_reset_fn()
         self.update_bar(0)
         self.set_visible(True)
-        self._status_text.text = "Show your hand(s) to begin"
+        safe_set_text(self._status_text, "Show your hand(s) to begin")
         self._status_text.color = color.yellow
-        self._sub_text.text = "Hold still while scanning..."
+        safe_set_text(self._sub_text, "Hold still while scanning...")
 
     def process(self, seen_this_frame: dict) -> bool:
         """Runs one frame of the registration state machine.
@@ -256,14 +272,14 @@ class InitOverlay:
             self.update_bar(0)
             if self.state != "waiting":
                 self.state = "waiting"
-                self._status_text.text = "Show your hand(s) to begin"
+                safe_set_text(self._status_text, "Show your hand(s) to begin")
                 self._status_text.color = color.yellow
-                self._sub_text.text = "Hold still while scanning..."
+                safe_set_text(self._sub_text, "Hold still while scanning...")
         else:
             self.state = "scanning"
             self.frames += 1
             self.update_bar(self.frames / self.HOLD_FRAMES)
-            self._status_text.text = (
+            safe_set_text(self._status_text,
                 "Scanning..." if self.frames % 10 < 5 else "Hold steady..."
             )
             self._status_text.color = color.orange

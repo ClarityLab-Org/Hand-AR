@@ -9,6 +9,7 @@ import json
 import math
 import os
 import time as _time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
@@ -120,7 +121,8 @@ class LoadedChunk:
     """
 
     def __init__(self, data: Any, thickness: int = 1,
-                 color_mode: str = "Natural RGB", lod_level: int = LOD_FULL) -> None:
+                 color_mode: str = "Natural RGB", lod_level: int = LOD_FULL,
+                 parent: Optional[Entity] = None) -> None:
         raw_verts = data["vertices"]
         raw_rgb = data["rgb"]
         raw_elev = data["elevation"]
@@ -169,7 +171,15 @@ class LoadedChunk:
         )
         self.mesh.clearTexGen(TextureStage.getDefault())
         self.mesh.setRenderModeThickness(thickness, 1)
-        self.entity = Entity(model=self.mesh)
+
+        safe_parent = parent
+        try:
+            if safe_parent is None:
+                raise RuntimeError
+            safe_parent.node()
+        except Exception:
+            safe_parent = scene
+        self.entity = Entity(parent=safe_parent, model=self.mesh)
         self.entity.set_render_mode_perspective(False)
         self.entity.set_render_mode_thickness(thickness)
         self.entity.setRenderModeThickness(thickness, 1)
@@ -198,7 +208,12 @@ class LoadedChunk:
         self.entity.setRenderModeThickness(thickness, 1)
 
     def destroy(self) -> None:
-        destroy(self.entity)
+        try:
+            if getattr(self, 'entity', None) is not None:
+                destroy(self.entity)
+        except Exception:
+            pass
+        self.entity = None
 
 
 class ExploreEnvironment:
@@ -258,7 +273,7 @@ class ExploreEnvironment:
 
         # Check if spatial chunks directory exists
         chunks_dir = target_path if isinstance(target_path, str) else ""
-        if not (chunks_dir and os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))):
+        if point_cloud is None and not (chunks_dir and os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))):
             candidates = []
             if isinstance(target_path, str):
                 candidates.extend([
@@ -278,7 +293,7 @@ class ExploreEnvironment:
                         chunks_dir = candidate
                         break
 
-        self.is_chunked = isinstance(chunks_dir, str) and os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))
+        self.is_chunked = point_cloud is None and isinstance(chunks_dir, str) and os.path.isdir(chunks_dir) and os.path.exists(os.path.join(chunks_dir, "manifest.json"))
         self.chunks_dir = chunks_dir
 
         # Atmosphere & fog depth
@@ -292,6 +307,16 @@ class ExploreEnvironment:
         self.landmarks: List[Dict] = []
         self.overview_entity: Optional[Entity] = None
         self.overview_mesh: Optional[Mesh] = None
+        try:
+            self.world_root = Entity(parent=scene)
+            self.world_root.name = 'world_root'
+            self.world_root.node()
+        except Exception:
+            self.world_root = Entity(parent=render)
+            self.world_root.name = 'world_root'
+        self.world_root.position = Vec3(0, 0, 0)
+        self.world_root.rotation = Vec3(0, 0, 0)
+        self.model_entity: Optional[Entity] = None
 
         # View-based streaming queues and caches
         self.load_queue: List[Tuple[float, str, int]] = []  # [(priority, filename, lod_level)]
@@ -344,7 +369,7 @@ class ExploreEnvironment:
                 )
                 self.overview_mesh.clearTexGen(TextureStage.getDefault())
                 self.overview_mesh.setRenderModeThickness(self.current_thickness, 1)
-                self.overview_entity = Entity(model=self.overview_mesh)
+                self.overview_entity = Entity(parent=self.world_root, model=self.overview_mesh)
                 self.overview_entity.set_render_mode_perspective(False)
                 self.overview_entity.set_render_mode_thickness(self.current_thickness)
                 self.overview_entity.setRenderModeThickness(self.current_thickness, 1)
@@ -419,6 +444,65 @@ class ExploreEnvironment:
         if self.is_chunked:
             self._update_chunk_streaming(self.player.x, self.player.z)
 
+    def apply_gesture(self, rot_delta: Optional[Tuple[float, float, float]] = None,
+                      zoom_delta: float = 0.0,
+                      pan_delta: Optional[Tuple[float, float, float]] = None) -> None:
+        """Applies the same object/world transforms to the shared scene root."""
+        if rot_delta is not None:
+            rx, ry, rz = rot_delta
+            self.world_root.rotation_x += rx
+            self.world_root.rotation_y += ry
+            self.world_root.rotation_z += rz
+        if abs(zoom_delta) > 0:
+            scale = max(0.1, 1.0 + zoom_delta)
+            self.world_root.scale = Vec3(scale, scale, scale)
+        if pan_delta is not None:
+            dx, dy, dz = pan_delta
+            self.world_root.position += Vec3(dx, dy, dz)
+
+    def render_scene(self, point_cloud: Optional[pd.DataFrame] = None,
+                     model_path: Optional[str] = None,
+                     model_scale: float = 1.0,
+                     model_pos: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+                     downsample_step: int = 1) -> None:
+        """Render the initialized cloud and optional model beneath the identity world root."""
+        if point_cloud is not None and not self.is_chunked and getattr(self, "single_entity", None) is None:
+            df = auto_align_up_axis(point_cloud.iloc[::max(1, int(downsample_step))])
+            if len(df) > 80_000:
+                self._partition_dataframe_into_chunks(df)
+                self._update_chunk_streaming(self.player.x, self.player.z)
+            else:
+                self._load_single_point_cloud(df)
+
+        if self.model_entity is not None:
+            destroy(self.model_entity)
+            self.model_entity = None
+
+        if model_path is None:
+            print("  Warning: no model path provided; rendering only the point cloud.")
+            return
+        if not os.path.isfile(model_path):
+            print(f"  Warning: model not found: {model_path}; rendering only the point cloud.")
+            return
+
+        try:
+            model_file = Path(model_path).resolve()
+            loaded = load_model(
+                model_file.stem,
+                path=model_file.parent,
+                file_types=(model_file.suffix,),
+            )
+            if loaded is None:
+                print(f"  Warning: failed to load model: {model_path}; rendering only the point cloud.")
+                return
+            loaded.set_two_sided(True)
+            self.model_entity = Entity(parent=self.world_root, model=loaded)
+            self.model_entity.position = Vec3(*model_pos)
+            self.model_entity.scale = model_scale
+            print(f"  Loaded model: {model_path}")
+        except Exception as exc:  # pragma: no cover - runtime fallback
+            print(f"  Warning: could not render model '{model_path}': {exc}")
+
     def _load_single_point_cloud(self, df: pd.DataFrame) -> None:
         """Builds the single-file point-cloud mesh and navigation bounds."""
         self.points_xz = np.array([df["x"], df["z"]]).T
@@ -447,7 +531,7 @@ class ExploreEnvironment:
         )
         self.single_mesh.clearTexGen(TextureStage.getDefault())
         self.single_mesh.setRenderModeThickness(self.current_thickness, 1)
-        self.single_entity = Entity(model=self.single_mesh)
+        self.single_entity = Entity(parent=self.world_root, model=self.single_mesh)
         self.single_entity.set_render_mode_perspective(False)
         self.single_entity.set_render_mode_thickness(self.current_thickness)
         self.single_entity.setRenderModeThickness(self.current_thickness, 1)
@@ -611,6 +695,7 @@ class ExploreEnvironment:
                         thickness=self.current_thickness,
                         color_mode=color_mode,
                         lod_level=lod_level,
+                        parent=self.world_root,
                     )
                     self.loaded_chunks[filename] = chunk
                     loads_done += 1
@@ -635,6 +720,7 @@ class ExploreEnvironment:
                         thickness=self.current_thickness,
                         color_mode=color_mode,
                         lod_level=new_lod,
+                        parent=self.world_root,
                     )
                     self.loaded_chunks[filename] = new_chunk
                     upgrades_done += 1
@@ -680,7 +766,7 @@ class ExploreEnvironment:
             thickness=self.current_thickness,
         )
         self.overview_mesh.clearTexGen(TextureStage.getDefault())
-        self.overview_entity = Entity(model=self.overview_mesh)
+        self.overview_entity = Entity(parent=self.world_root, model=self.overview_mesh)
         self.overview_entity.set_render_mode_perspective(False)
         self.overview_entity.set_render_mode_thickness(self.current_thickness)
 

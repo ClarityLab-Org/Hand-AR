@@ -134,7 +134,7 @@ def test_max_points_stops_reading_at_limit(tmp_path):
     assert len(frame) == 35
 
 
-def test_explore_laz_max_points_constant():
-    import explore_laz
-    assert hasattr(explore_laz, "MAX_POINTS")
-    assert explore_laz.MAX_POINTS == 20_499_455
+def test_explore_max_points_constant():
+    import explore
+    assert hasattr(explore, "MAX_POINTS")
+    assert explore.MAX_POINTS == 20_499_455

@@ -21,11 +21,13 @@ from typing import Deque, List, Optional, Tuple
 
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
-from panda3d.core import Texture as P3DTexture
+from direct.task import Task
+from panda3d.core import Texture as P3DTexture, WindowProperties
 from ursina import *
 
 from handarm import config
 from handarm.engine.explore_core import ExploreEnvironment
+from handarm.engine.ui_common import WINDOW_SIZE, safe_set_text
 from handarm.tracking.gestures import (
     compute_explore_features,
     compute_thumbs_up,
@@ -350,6 +352,8 @@ class NavigationHUD:
             color=color.white,
             z=0.09,
         )
+        self._points_text_value = "Loaded: 0 / Total: 0"
+        self._gesture_text_value = "GESTURE: Neutral / Hover"
 
         # High-performance telemetry panel with live graphs for FPS, CPU, RAM
         # Positioned cleanly away from window control buttons
@@ -402,9 +406,15 @@ class NavigationHUD:
             self.frame_times.popleft()
 
         loaded, total = self._point_count(env)
-        self.points_text.text = f"Loaded: {loaded:,} / Total: {total:,}"
+        points_text = f"Loaded: {loaded:,} / Total: {total:,}"
+        if points_text != self._points_text_value:
+            safe_set_text(self.points_text, points_text)
+            self._points_text_value = points_text
         clean_gesture = gesture.replace("🖐️", "").replace("🖐", "").replace("👌", "").replace("✌️", "").replace("✌", "").replace("👍", "").strip()
-        self.gesture_text.text = f"GESTURE: {clean_gesture or gesture}"
+        gesture_text = f"GESTURE: {clean_gesture or gesture}"
+        if gesture_text != self._gesture_text_value:
+            safe_set_text(self.gesture_text, gesture_text)
+            self._gesture_text_value = gesture_text
 
         if now - self.last_metrics_update >= self.UPDATE_INTERVAL:
             elapsed = self.frame_times[-1] - self.frame_times[0] if len(self.frame_times) > 1 else 0.0
@@ -426,8 +436,12 @@ class NavigationHUD:
                 font_label=self.font_label,
                 font_val=self.font_val,
             )
-            self.perf_tex._cached_image = new_img
-            self.perf_tex.apply()
+            try:
+                if getattr(self.perf_tex, 'parent', None) is not None:
+                    self.perf_tex._cached_image = new_img
+                    self.perf_tex.apply()
+            except Exception:
+                pass
             self.last_metrics_update = now
 
 
@@ -436,7 +450,12 @@ def _navigation_gesture(gesture: str, features: Optional[dict] = None) -> str:
     return gesture_label(gesture if features else "None")
 
 
-def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] = None) -> None:
+def main(point_cloud: Optional[pd.DataFrame] = None,
+         target_path: Optional[str] = None,
+         model_path: Optional[str] = None,
+         model_scale: float = 1.0,
+         model_pos: Optional[Tuple[float, float, float]] = None,
+         downsample_step: int = 1) -> None:
     """Main entry point for standalone explore mode."""
 
     # File loading
@@ -485,7 +504,39 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     # -----------------------------------------------------------------------
     # Ursina app
     # -----------------------------------------------------------------------
-    app = Ursina()
+    windowed_size = WINDOW_SIZE
+    app = Ursina(size=windowed_size, development_mode=False)
+    fullscreen = False
+
+    def request_window_state(is_fullscreen: bool) -> None:
+        window.fullscreen = is_fullscreen
+        props = WindowProperties()
+        props.set_fullscreen(is_fullscreen)
+        if is_fullscreen:
+            props.set_origin(window.main_monitor.x, window.main_monitor.y)
+        else:
+            props.set_size(*windowed_size)
+            x = int(window.main_monitor.x + (window.main_monitor.width - windowed_size[0]) / 2)
+            y = int(window.main_monitor.y + (window.main_monitor.height - windowed_size[1]) / 2)
+            props.set_origin(x, y)
+        application.base.win.request_properties(props)
+        if not is_fullscreen:
+            window.setOrigin(x, y)
+            application.base.win.request_properties(window)
+
+    request_window_state(fullscreen)
+    base.graphicsEngine.renderFrame()
+    base.graphicsEngine.renderFrame()
+
+    def _report_window_size(task):
+        print(
+            f"[Window] requested {windowed_size[0]}x{windowed_size[1]}; "
+            f"actual {base.win.get_x_size()}x{base.win.get_y_size()} "
+            f"at {tuple(window.getOrigin())}"
+        )
+        return Task.done
+
+    base.taskMgr.doMethodLater(0.5, _report_window_size, "report-window-size")
     window.fps_counter.enabled = False
     window.entity_counter.enabled = False
     window.collider_counter.enabled = False
@@ -541,9 +592,16 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     env = ExploreEnvironment(
         target,
         point_cloud=point_cloud,
-        downsample_step=1,
+        downsample_step=downsample_step,
         point_thickness=config.POINT_THICKNESS,
         reset_cooldown_duration=0.0,
+    )
+    env.render_scene(
+        point_cloud=point_cloud,
+        model_path=model_path,
+        model_scale=model_scale,
+        model_pos=model_pos or (0.0, 0.0, 0.0),
+        downsample_step=downsample_step,
     )
 
     hud = NavigationHUD(max_points=point_cloud.attrs.get("point_count", len(point_cloud))
@@ -598,18 +656,26 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     # Input handler
     # -----------------------------------------------------------------------
     def input(key: str) -> None:
+        nonlocal fullscreen
         if key == 'escape' or key == 'q':
             mouse.locked = False
             application.quit()
+        elif key == 'f11':
+            fullscreen = not fullscreen
+            request_window_state(fullscreen)
         elif key == 'h':
             gesture_guide.enabled = not gesture_guide.enabled
         elif key == 'r':
             env.reset_player()
-            rotate_status.text = "Rotate: [Arrows] / [J][L] | 360° [T]"
+            safe_set_text(rotate_status, "Rotate: [Arrows] / [J][L] | 360° [T]")
             rotate_status.color = color.yellow
         elif key == 't':
             is_active = env.toggle_auto_rotate()
-            rotate_status.text = "Rotate: 360° Turntable ON [T]" if is_active else "Rotate: [Arrows] / [J][L] | 360° [T]"
+            safe_set_text(
+                rotate_status,
+                "Rotate: 360° Turntable ON [T]" if is_active
+                else "Rotate: [Arrows] / [J][L] | 360° [T]",
+            )
             rotate_status.color = color.lime if is_active else color.yellow
         elif key == 'c':
             new_mode = env.cycle_color_mode()
@@ -622,7 +688,7 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         elif key in ('1', '2', '3', '4'):
             name = env.jump_to_landmark(int(key) - 1)
             if name:
-                landmark_status.text = f"At: {name} [{key}]"
+                safe_set_text(landmark_status, f"At: {name} [{key}]")
 
     # Register with Ursina
     _main_mod = sys.modules['__main__']
