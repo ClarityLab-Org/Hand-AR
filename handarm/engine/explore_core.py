@@ -238,6 +238,7 @@ class ExploreEnvironment:
         if point_thickness is None:
             point_thickness = config.POINT_THICKNESS
         self.target_path = target_path
+        self.total_points = int(point_cloud.attrs.get("point_count", len(point_cloud))) if point_cloud is not None else 0
 
         # Honor exact point thickness configured in .env / config
         req_thickness = max(1, int(round(point_thickness))) if point_thickness is not None else 2
@@ -312,6 +313,12 @@ class ExploreEnvironment:
                     chunk["file"]: chunk for chunk in self.chunk_manifest
                     if "file" in chunk
                 }
+                self.total_points = int(
+                    manifest_data.get(
+                        "total_points",
+                        sum(int(chunk.get("point_count", 0)) for chunk in self.chunk_manifest),
+                    )
+                )
                 self.landmarks = manifest_data.get("landmarks", [])
                 bounds = manifest_data.get("bounds", {})
                 self.min_x = bounds.get("min_x", -300.0)

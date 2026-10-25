@@ -335,7 +335,7 @@ class NavigationHUD:
         )
         self.points_text = Text(
             parent=camera.ui,
-            text="Points: 0",
+            text="Loaded: 0 / Total: 0",
             position=(0.0, 0.47),
             origin=(0, 0),
             scale=0.95,
@@ -368,21 +368,23 @@ class NavigationHUD:
 
     @staticmethod
     def _point_count(env: ExploreEnvironment) -> Tuple[int, int]:
-        """Return only points represented by currently rendered geometry."""
+        """Return points represented by current geometry and the dataset total."""
         loaded_chunks = getattr(env, "loaded_chunks", {})
         loaded = sum(int(getattr(chunk, "vertex_count", 0)) for chunk in loaded_chunks.values())
         overview_colors = getattr(env, "_ov_np_rgb", None)
         overview_count = len(overview_colors) if overview_colors is not None else 0
+        total = int(getattr(env, "total_points", 0))
 
         if loaded or overview_count:
             loaded += overview_count
-            return loaded, loaded
+            return loaded, total or loaded
 
         single_mesh = getattr(env, "single_mesh", None)
         if single_mesh is not None:
-            return len(getattr(single_mesh, "vertices", ())), len(getattr(single_mesh, "vertices", ()))
+            loaded = len(getattr(single_mesh, "vertices", ()))
+            return loaded, total or loaded
 
-        return loaded, 0
+        return loaded, total
 
     def update(self, env: ExploreEnvironment, gesture: str, dt: float) -> None:
         now = _time.monotonic()
@@ -391,8 +393,8 @@ class NavigationHUD:
         while self.frame_times and self.frame_times[0] < cutoff:
             self.frame_times.popleft()
 
-        loaded, _ = self._point_count(env)
-        self.points_text.text = f"Points: {loaded:,}"
+        loaded, total = self._point_count(env)
+        self.points_text.text = f"Loaded: {loaded:,} / Total: {total:,}"
         clean_gesture = gesture.replace("🖐️", "").replace("🖐", "").replace("👌", "").replace("✌️", "").replace("✌", "").replace("👍", "").strip()
         self.gesture_text.text = f"GESTURE: {clean_gesture or gesture}"
 
