@@ -1,9 +1,7 @@
 """Thread-safe hand tracker using MediaPipe."""
 
 import copy
-import math
 import threading
-import time
 from typing import Any, Callable, Dict, Optional
 
 import cv2
@@ -53,14 +51,6 @@ class HandTracker:
         }
         self._gesture_candidates = {'Left': None, 'Right': None}
         self._gesture_candidate_counts = {'Left': 0, 'Right': 0}
-        self._owner_label: Optional[str] = None
-        self._owner_candidate_label: Optional[str] = None
-        self._owner_candidate_anchor = None
-        self._owner_candidate_scale: Optional[float] = None
-        self._owner_candidate_since: Optional[float] = None
-        self._owner_last_seen = time.monotonic()
-        self._owner_anchor = None
-        self._owner_scale: Optional[float] = None
         self._latest_frame: Optional[np.ndarray] = None
         camera_connected = bool(getattr(self._cap, 'isOpened', lambda: True)())
         self._status: Dict[str, Any] = {
@@ -68,8 +58,6 @@ class HandTracker:
             'camera_connected': camera_connected,
             'error': None if camera_connected else 'Camera is not available',
             'last_error': None if camera_connected else 'Camera is not available',
-            'owner_status': 'Acquiring...',
-            'owner_hand': None,
         }
         self._shutdown_lock = threading.Lock()
         self._resources_closed = False
@@ -98,88 +86,6 @@ class HandTracker:
     def _set_status(self, **updates: Any) -> None:
         with self._lock:
             self._status.update(updates)
-
-    @staticmethod
-    def _hand_signature(hand_lms: Any) -> tuple:
-        landmarks = hand_lms.landmark
-        xs = [point.x for point in landmarks]
-        ys = [point.y for point in landmarks]
-        scale = max(max(xs) - min(xs), max(ys) - min(ys), 0.01)
-        return (landmarks[0].x, landmarks[0].y, scale)
-
-    def _update_owner(self, detections: Dict[str, tuple], now: float) -> Optional[str]:
-        """Acquire one stable hand, then retain it by label and continuity."""
-        if self._owner_label is not None:
-            if self._owner_label in detections:
-                wrist_x, wrist_y, scale = detections[self._owner_label]
-                anchor_x, anchor_y = self._owner_anchor or (wrist_x, wrist_y)
-                base_scale = self._owner_scale or scale
-                continuous = (
-                    math.dist((wrist_x, wrist_y), (anchor_x, anchor_y))
-                    <= self.OWNER_TRACK_POSITION_TOLERANCE
-                    and abs(scale - base_scale) / max(base_scale, 0.01)
-                    <= self.OWNER_TRACK_SCALE_TOLERANCE
-                )
-                if continuous:
-                    self._owner_anchor = (wrist_x, wrist_y)
-                    self._owner_scale = scale
-                    self._owner_last_seen = now
-                    self._set_status(owner_status='Locked', owner_hand=self._owner_label)
-                    return self._owner_label
-            if now - self._owner_last_seen > self.OWNER_LOSS_TIMEOUT_SECONDS:
-                self._owner_label = None
-                self._owner_candidate_label = None
-                self._owner_candidate_since = None
-                self._owner_candidate_anchor = None
-                self._owner_candidate_scale = None
-                self._owner_anchor = None
-                self._owner_scale = None
-                self._set_status(owner_status='Lost', owner_hand=None)
-            else:
-                self._set_status(owner_status='Lost', owner_hand=None)
-            return None
-
-        if not detections:
-            self._owner_candidate_label = None
-            self._owner_candidate_since = None
-            self._set_status(owner_status='Acquiring...', owner_hand=None)
-            return None
-
-        # Keep the first stable handedness candidate; a second hand cannot take
-        # control during acquisition unless the candidate disappears.
-        label = self._owner_candidate_label
-        if label not in detections:
-            label = next(iter(detections))
-            wrist_x, wrist_y, scale = detections[label]
-            self._owner_candidate_label = label
-            self._owner_candidate_anchor = (wrist_x, wrist_y)
-            self._owner_candidate_scale = scale
-            self._owner_candidate_since = now
-        else:
-            wrist_x, wrist_y, scale = detections[label]
-            anchor_x, anchor_y = self._owner_candidate_anchor
-            base_scale = self._owner_candidate_scale or scale
-            stable = (
-                math.dist((wrist_x, wrist_y), (anchor_x, anchor_y))
-                <= self.OWNER_POSITION_TOLERANCE
-                and abs(scale - base_scale) / max(base_scale, 0.01)
-                <= self.OWNER_SCALE_TOLERANCE
-            )
-            if not stable:
-                self._owner_candidate_anchor = (wrist_x, wrist_y)
-                self._owner_candidate_scale = scale
-                self._owner_candidate_since = now
-
-        candidate_since = self._owner_candidate_since or now
-        if now - candidate_since >= self.OWNER_LOCK_SECONDS:
-            self._owner_label = self._owner_candidate_label
-            self._owner_last_seen = now
-            self._owner_anchor = detections[self._owner_label][:2]
-            self._owner_scale = detections[self._owner_label][2]
-            self._set_status(owner_status='Locked', owner_hand=self._owner_label)
-            return self._owner_label
-        self._set_status(owner_status='Acquiring...', owner_hand=None)
-        return None
 
     def _update_loop(self) -> None:
         """Background thread: continuously captures frames and classifies gestures."""
@@ -213,26 +119,11 @@ class HandTracker:
                     }
 
                     visible_hands = set()
-                    detections = {}
                     if results.multi_hand_landmarks:
                         for idx, hand_lms in enumerate(results.multi_hand_landmarks):
                             hand_type = results.multi_handedness[idx].classification[0].label
                             visible_hands.add(hand_type)
-                            wrist_x, wrist_y, scale = self._hand_signature(hand_lms)
-                            detections[hand_type] = (wrist_x, wrist_y, scale)
-                    owner_label = self._update_owner(detections, time.monotonic())
-                    classified_hands: Dict[str, Dict[str, Any]] = {}
-                    if results.multi_hand_landmarks:
-                        for idx, hand_lms in enumerate(results.multi_hand_landmarks):
-                            hand_type = results.multi_handedness[idx].classification[0].label
-                            # Inspect both hands only to recognize the explicit
-                            # paired-palm command; normal gestures remain owner-only.
-                            if owner_label != hand_type and len(detections) != 2:
-                                continue
                             hand_data = self._classify_hand(hand_lms.landmark, hand_type)
-                            classified_hands[hand_type] = hand_data
-                            if owner_label != hand_type:
-                                continue
                             gesture = hand_data.get('gesture', 'None')
                             if gesture == self._gesture_candidates[hand_type]:
                                 self._gesture_candidate_counts[hand_type] += 1
@@ -249,27 +140,6 @@ class HandTracker:
                             hand_data['x'] = hand_lms.landmark[0].x
                             hand_data['y'] = hand_lms.landmark[0].y
                             new_state[hand_type] = hand_data
-
-                    paired_palms = (
-                        owner_label is not None
-                        and len(classified_hands) == 2
-                        and all(data.get('open_palm', False)
-                                for data in classified_hands.values())
-                    )
-                    if paired_palms:
-                        right_lms = next(
-                            hand_lms for idx, hand_lms in enumerate(results.multi_hand_landmarks)
-                            if results.multi_handedness[idx].classification[0].label == 'Right'
-                        )
-                        new_state['Right'] = {
-                            'visible': True,
-                            'x': right_lms.landmark[0].x,
-                            'y': right_lms.landmark[0].y,
-                            'gesture': 'Move Up',
-                            'navigation': '👐 Move Up',
-                        }
-                        if owner_label == 'Left':
-                            new_state['Left']['gesture'] = 'None'
 
                     for hand_type in ('Left', 'Right'):
                         if hand_type not in visible_hands:
@@ -307,9 +177,3 @@ class HandTracker:
                     finally:
                         self._resources_closed = True
             self._set_status(running=False)
-    OWNER_LOCK_SECONDS = 2.5
-    OWNER_LOSS_TIMEOUT_SECONDS = 2.0
-    OWNER_POSITION_TOLERANCE = 0.12
-    OWNER_SCALE_TOLERANCE = 0.35
-    OWNER_TRACK_POSITION_TOLERANCE = 0.30
-    OWNER_TRACK_SCALE_TOLERANCE = 0.60

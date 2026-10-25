@@ -17,8 +17,6 @@ GESTURE_LABELS = {
     "Move Backward": "🫳 Move Backward",
     "Move Left": "🤜 Move Left",
     "Move Right": "🤛 Move Right",
-    "Move Up": "👐 Move Up",
-    "Move Down": "✋ Move Down",
     "Reset View": "👍 Reset View",
     "Zoom In": "🤏 Zoom In",
     "Zoom Out": "✌️ Zoom Out",
@@ -106,10 +104,6 @@ def compute_explore_features(landmarks: List[Any]) -> Dict[str, Any]:
                  landmarks[16].y > wrist_y and landmarks[20].y > wrist_y)
     # Simple index-up: only index extended (explore.py standalone variant)
     index_up_simple = index_up and not middle_up and not ring_up and not pinky_up
-    index_down_simple = (
-        (not index_up) and not middle_up and not ring_up and not pinky_up
-        and landmarks[8].y > landmarks[6].y
-    )
 
     return {
         'peace': peace,
@@ -117,7 +111,6 @@ def compute_explore_features(landmarks: List[Any]) -> Dict[str, Any]:
         'fist': fist,
         'palm_down': palm_down,
         'index_up_simple': index_up_simple,
-        'index_down_simple': index_down_simple,
         'wrist_y': wrist_y,
         'wrist_x': wrist.x,
         'pinch_distance': math.dist(
@@ -182,21 +175,12 @@ def classify_right_explore(
 
 def classify_left_explore_trial2(features: Dict) -> str:
     """Left-hand translation classifier used by the trial2 variant."""
-    if _is_centered_hand(features) and features['open_palm']:
-        return 'Move Down'
     return _directional_gesture(features, "Move")
 
 
 def classify_left_explore_standalone(features: Dict) -> str:
     """Classify four-direction movement and vertical flight."""
-    if _is_centered_hand(features) and features['open_palm']:
-        return 'Move Down'
     return _directional_gesture(features, "Move")
-
-
-def _is_centered_hand(features: Dict) -> bool:
-    """Keep the two vertical postures out of the existing directional zones."""
-    return 0.35 <= features['wrist_x'] <= 0.65 and 0.35 <= features['wrist_y'] <= 0.65
 
 
 def _directional_gesture(features: Dict, prefix: str) -> str:

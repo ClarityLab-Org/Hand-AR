@@ -9,13 +9,9 @@ import cv2
 import mediapipe as mp
 import numpy as np
 from panda3d.core import Texture as P3DTexture
-from ursina import Button, Entity, Slider, Text, camera, color
+from ursina import Entity, Text, camera, color
 
 from handarm import config
-from handarm.engine.speed_settings import (
-    GESTURE_SPEED_DEFAULTS, load_gesture_speeds, reset_gesture_speeds,
-    save_gesture_speeds,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -156,66 +152,6 @@ class PerformanceUI:
         self.fps_text.text = f"FPS: {fps}"
         self.cpu_text.text = f"CPU: {cpu:.0f}%"
         self.ram_text.text = f"RAM: {ram:.0f}%"
-
-
-class GestureSpeedPanel:
-    """Live, persistent speed controls shown while explore mode loads."""
-
-    def __init__(self, on_change=None) -> None:
-        self.values = load_gesture_speeds()
-        self.on_change = on_change
-        self.sliders = {}
-        self.value_text = {}
-        self.panel = Entity(
-            parent=camera.ui, model="quad", scale=(0.43, 0.82),
-            position=(0.53, 0.0), color=color.color(0, 0, 0.72, 0.92),
-            z=0.11,
-        )
-        Text("GESTURE SPEEDS (1.00x default)", parent=camera.ui,
-             position=(0.34, 0.37), scale=0.8, color=color.cyan, z=0.1)
-        names = list(GESTURE_SPEED_DEFAULTS)
-        for idx, gesture in enumerate(names):
-            column = idx // 7
-            row = idx % 7
-            x = 0.35 + column * 0.21
-            y = 0.31 - row * 0.085
-            Text(gesture, parent=camera.ui, position=(x, y), scale=0.52,
-                 color=color.white, z=0.1)
-            slider = Slider(
-                min=0.25, max=2.0, default=self.values[gesture], step=0.05,
-                parent=camera.ui, position=(x + 0.045, y - 0.032),
-                scale=0.12, z=0.1,
-            )
-            value_text = Text(
-                f"{self.values[gesture]:.2f}x", parent=camera.ui,
-                position=(x + 0.125, y - 0.01), scale=0.55,
-                color=color.yellow, z=0.1,
-            )
-            self.sliders[gesture] = slider
-            self.value_text[gesture] = value_text
-            slider.on_value_changed = lambda name=gesture: self._changed(
-                name, self.sliders[name].value
-            )
-        Button(
-            "RESET DEFAULTS", parent=camera.ui, scale=(0.16, 0.04),
-            position=(0.53, -0.37), color=color.color(0, 0, 0.35),
-            text_color=color.white, z=0.1, on_click=self.reset,
-        )
-
-    def _changed(self, gesture: str, value: float) -> None:
-        self.values[gesture] = float(value)
-        self.value_text[gesture].text = f"{float(value):.2f}x"
-        save_gesture_speeds(self.values)
-        if self.on_change:
-            self.on_change(self.values)
-
-    def reset(self) -> None:
-        self.values = reset_gesture_speeds()
-        for gesture, slider in self.sliders.items():
-            slider.value = self.values[gesture]
-            self.value_text[gesture].text = f"{self.values[gesture]:.2f}x"
-        if self.on_change:
-            self.on_change(self.values)
 
 
 # ---------------------------------------------------------------------------

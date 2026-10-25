@@ -27,7 +27,7 @@ from ursina.prefabs.first_person_controller import FirstPersonController
 from handarm import config
 from handarm.geometry.alignment import auto_align_up_axis
 from handarm.engine.ui_common import (
-    CameraFeedUI, GestureSpeedPanel, PerformanceUI, InitOverlay, draw_skeletons,
+    CameraFeedUI, PerformanceUI, InitOverlay, draw_skeletons,
 )
 from handarm.tracking.gestures import (
     is_open_palm_relaxed, is_peace, is_pinch, pinch_distance,
@@ -215,7 +215,7 @@ def main() -> None:
         env = ExploreEnvironment(
             model_path,
             downsample_step=1,
-            point_thickness=3.0,
+            point_thickness=1.5,
             reset_cooldown_duration=2.0,
         )
         player = env.player
@@ -227,7 +227,7 @@ def main() -> None:
                 gesture = classify_right_explore(features)
             else:
                 gesture = classify_left_explore_trial2(features)
-            return {'gesture': gesture, 'open_palm': features['open_palm']}
+            return {'gesture': gesture}
 
         # Frame annotator — uses init overlay's registered_hands
         def _annotate_explore(frame_rgb, results, state):
@@ -256,12 +256,11 @@ def main() -> None:
                  "<lime>LEFT HAND (FLIGHT MODE)\n"
                  "<white>[Thumbs Up]  : Position Reset\n"
                  "<white>[Peace]      : Toggle Walk Mode\n"
-                 "<white>[Left Palm]  : Fly Down\n"
+                 "<white>[Index Up]   : Fly Up\n"
+                 "<white>[Index Down] : Fly Down\n"
                  "<white>Move Palm Up : Fly Forward\n"
                  "<white>Move Palm Dn : Fly Backward\n"
-                 "<white>[Fist]       : Stop\n\n"
-                 "<yellow>BOTH HANDS\n"
-                 "<white>[Both Open Palms] : Fly Up",
+                 "<white>[Fist]       : Stop",
             position=window.top_left + Vec2(0.02, -0.02),
             origin=(-0.5, 0.5), scale=0.8, background=True,
         )
@@ -276,14 +275,10 @@ def main() -> None:
                             scale=1.1, color=color.yellow)
         size_status = Text(text="Point Size: 1px [P]", position=(0.3, -0.50),
                            scale=1.1, color=color.white)
-        chunk_status = Text(text="Loaded: 0 / 0 (0.0%)", position=(0.3, -0.55),
+        chunk_status = Text(text="Streamed: --", position=(0.3, -0.55),
                             scale=1.0, color=color.lime)
         landmark_status = Text(text="Jump: [1] Academic [2] Labs [3] Plaza [4] Gate",
                                position=(0.3, -0.60), scale=0.9, color=color.azure)
-        owner_status = Text(text="Hand: Acquiring...", position=(0.3, -0.65),
-                            scale=1.0, color=color.orange)
-        speed_panel = GestureSpeedPanel(env.set_gesture_speeds)
-        env.set_gesture_speeds(speed_panel.values)
 
     # -----------------------------------------------------------------------
     # Shared UI
@@ -553,17 +548,10 @@ def main() -> None:
                                 if left['visible'] else "Left: Not Detected")
             right_status.text = (f"Right: {right['gesture']}"
                                  if right['visible'] else "Right: Not Detected")
-            owner_state = tracker.get_status().get("owner_status", "Acquiring...")
-            owner_status.text = f"Hand: {owner_state}"
-            owner_status.color = (
-                color.lime if owner_state == "Locked"
-                else color.red if owner_state == "Lost"
-                else color.orange
-            )
 
             # Steering + movement
             env.update_steering(right)
-            env.update_movement_and_terrain(left, right)
+            env.update_movement_and_terrain(left)
 
             # Flight status display
             flight_status.text = ("Mode: Flying" if env.is_flying
@@ -572,15 +560,7 @@ def main() -> None:
 
             if env.is_chunked:
                 pts_count = sum(len(c.vertices) for c in env.loaded_chunks.values())
-                overview = len(getattr(env, "_ov_np_rgb", ()))
-                loaded_points = pts_count + overview
-                total_points = int(getattr(env, "total_points", 0)) or loaded_points
-                loaded_points = min(loaded_points, total_points)
-                percent = (loaded_points / total_points * 100.0) if total_points else 0.0
-                chunk_status.text = (
-                    f"Loaded: {loaded_points:,} / {total_points:,} "
-                    f"({min(100.0, percent):.1f}%) | {len(env.loaded_chunks)} chunks"
-                )
+                chunk_status.text = f"Streamed: {len(env.loaded_chunks)} chunks ({pts_count/1e6:.1f}M pts)"
 
     # -----------------------------------------------------------------------
     # Input handler
