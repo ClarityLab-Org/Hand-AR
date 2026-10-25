@@ -489,11 +489,19 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
     _mp_drawing = mp.solutions.drawing_utils
 
     def _annotate_standalone(frame_rgb, results, state):
-        if results.multi_hand_landmarks:
+        if results and getattr(results, 'multi_hand_landmarks', None):
             for hand_lms in results.multi_hand_landmarks:
                 _mp_drawing.draw_landmarks(
                     frame_rgb, hand_lms, _mp_hands.HAND_CONNECTIONS,
                 )
+        left_locked = state.get('Left', {}).get('locked', False)
+        right_locked = state.get('Right', {}).get('locked', False)
+        if left_locked and right_locked:
+            cv2.putText(frame_rgb, "HANDS LOCKED", (12, 34),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        elif left_locked or right_locked:
+            cv2.putText(frame_rgb, "1 HAND LOCKED", (12, 34),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 220, 255), 2)
         # Clean camera preview with landmarks, resized to 320x240
         return cv2.resize(frame_rgb, (320, 240))
 
