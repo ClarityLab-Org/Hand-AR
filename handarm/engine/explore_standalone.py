@@ -28,6 +28,8 @@ from handarm import config
 from handarm.engine.explore_core import ExploreEnvironment
 from handarm.tracking.gestures import (
     compute_explore_features,
+    compute_thumbs_up,
+    classify_both_hands,
     classify_right_explore,
     classify_left_explore_standalone,
     gesture_label,
@@ -178,6 +180,12 @@ def _create_gesture_guide_texture() -> Texture:
         draw.text((105, y), name, font=font_item, fill=(0, 225, 255, 255))
         draw.text((400, y), desc, font=font_desc, fill=(255, 255, 255, 255))
         y += 48
+
+    draw.line((36, y + 2, width - 36, y + 2), fill=(0, 225, 255, 80), width=1)
+    draw.text((42, y + 14), "👐", font=font_emoji_item, fill=(255, 255, 255, 255))
+    draw.text((105, y + 18), "BOTH HAND", font=font_item, fill=(255, 220, 50, 255))
+    draw.text((330, y + 18), ":  Palms = Move Down | Palm + 👍 = Move Up",
+              font=font_desc, fill=(255, 255, 255, 255))
 
     # Footer controls
     y += 10
@@ -455,6 +463,8 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         return {
             'gesture': gesture,
             'navigation': _navigation_gesture(gesture, features),
+            'open_palm': features['open_palm'],
+            'thumbs_up': compute_thumbs_up(features, margin=0.02),
         }
 
     # -----------------------------------------------------------------------
@@ -565,12 +575,24 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
 
         state = tracker.get_state()
         left, right = state['Left'], state['Right']
+        both_gesture = "None"
+        if left['visible'] and right['visible']:
+            both_gesture = classify_both_hands(left, right)
+
         active_hand = right if right['visible'] else left
-        active_gesture = active_hand.get("gesture", "None")
+        active_gesture = both_gesture if both_gesture != "None" else active_hand.get("gesture", "None")
         hud.update(env, gesture_label(active_gesture), time.dt)
 
-        env.update_steering(right)
-        env.update_movement_and_terrain(left)
+        # A valid two-hand gesture has exclusive control for this frame. Do
+        # not let the right-hand palm also trigger rotation or zoom.
+        steering_state = right if both_gesture == "None" else {"visible": False}
+        env.update_steering(steering_state)
+        movement_state = left
+        if both_gesture == "Both hand Move Up":
+            movement_state = dict(left, gesture="Move Up")
+        elif both_gesture == "Both hand Move Down":
+            movement_state = dict(left, gesture="Move Down")
+        env.update_movement_and_terrain(movement_state)
 
     # -----------------------------------------------------------------------
     # Input handler

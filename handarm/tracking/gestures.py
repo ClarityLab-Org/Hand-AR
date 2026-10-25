@@ -20,6 +20,8 @@ GESTURE_LABELS = {
     "Reset View": "👍 Reset View",
     "Zoom In": "🤏 Zoom In",
     "Zoom Out": "✌️ Zoom Out",
+    "Both hand Move Down": "👐 Both hand: Move Down",
+    "Both hand Move Up": "👐 Both hand: Move Up",
 }
 
 
@@ -149,6 +151,17 @@ def compute_thumbs_up(features: Dict, margin: float = 0.08) -> bool:
             features['thumb_dist'] > features['middle_dist'] + margin and
             features['thumb_dist'] > features['ring_dist'] + margin and
             features['thumb_dist'] > features['pinky_dist'] + margin)
+
+
+def classify_both_hands(left_features: Dict, right_features: Dict) -> str:
+    """Classify two-hand gestures used for vertical navigation."""
+    if not right_features.get('open_palm', False):
+        return 'None'
+    if left_features.get('thumbs_up', False):
+        return 'Both hand Move Up'
+    if left_features.get('open_palm', False):
+        return 'Both hand Move Down'
+    return 'None'
 
 
 # ---------------------------------------------------------------------------
