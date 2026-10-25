@@ -170,7 +170,7 @@ class LoadedChunk:
         self.mesh.clearTexGen(TextureStage.getDefault())
         self.mesh.setRenderModeThickness(thickness, 1)
         self.entity = Entity(model=self.mesh)
-        self.entity.set_render_mode_perspective(False)
+        self.entity.set_render_mode_perspective(True)
         self.entity.set_render_mode_thickness(thickness)
         self.entity.setRenderModeThickness(thickness, 1)
 
@@ -193,7 +193,7 @@ class LoadedChunk:
         self.mesh.render_points_in_3d = False
         self.mesh.thickness = thickness
         self.mesh.setRenderModeThickness(thickness, 1)
-        self.entity.set_render_mode_perspective(False)
+        self.entity.set_render_mode_perspective(True)
         self.entity.set_render_mode_thickness(thickness)
         self.entity.setRenderModeThickness(thickness, 1)
 
@@ -238,6 +238,7 @@ class ExploreEnvironment:
         if point_thickness is None:
             point_thickness = config.POINT_THICKNESS
         self.target_path = target_path
+        self.total_points = 0
 
         # Honor exact point thickness configured in .env / config
         req_thickness = max(1, int(round(point_thickness))) if point_thickness is not None else 2
@@ -313,6 +314,7 @@ class ExploreEnvironment:
                     if "file" in chunk
                 }
                 self.landmarks = manifest_data.get("landmarks", [])
+                self.total_points = int(manifest_data.get("total_points", 0))
                 bounds = manifest_data.get("bounds", {})
                 self.min_x = bounds.get("min_x", -300.0)
                 self.max_x = bounds.get("max_x", 300.0)
@@ -338,7 +340,7 @@ class ExploreEnvironment:
                 self.overview_mesh.clearTexGen(TextureStage.getDefault())
                 self.overview_mesh.setRenderModeThickness(self.current_thickness, 1)
                 self.overview_entity = Entity(model=self.overview_mesh)
-                self.overview_entity.set_render_mode_perspective(False)
+                self.overview_entity.set_render_mode_perspective(True)
                 self.overview_entity.set_render_mode_thickness(self.current_thickness)
                 self.overview_entity.setRenderModeThickness(self.current_thickness, 1)
 
@@ -346,6 +348,7 @@ class ExploreEnvironment:
             self.points_y = np.empty((0,), dtype=np.float32)
 
         elif point_cloud is not None:
+            self.total_points = int(point_cloud.attrs.get("point_count", len(point_cloud)))
             df = auto_align_up_axis(point_cloud.iloc[::downsample_step])
             if len(df) > 80_000:
                 print(f"  Large point cloud ({len(df):,} pts) detected. Partitioning for dynamic view-based streaming...")
@@ -356,6 +359,7 @@ class ExploreEnvironment:
             # Fallback for single CSV files
             print(f"  Loading single point cloud file: {target_path}...")
             df = pd.read_csv(target_path)
+            self.total_points = len(df)
             df = df.iloc[::downsample_step]
             df = auto_align_up_axis(df)
             if len(df) > 80_000:
@@ -399,6 +403,7 @@ class ExploreEnvironment:
         self.walk_speed: float = config.WALK_SPEED
         self.flight_speed: float = config.FLIGHT_SPEED
         self.vertical_speed: float = config.VERTICAL_SPEED
+        self.gesture_speeds: Dict[str, float] = {}
 
         # Fixed-point Rotation Controls (loaded from config/.env)
         self.auto_rotate: bool = False
@@ -411,6 +416,17 @@ class ExploreEnvironment:
         # Initial stream tick around origin
         if self.is_chunked:
             self._update_chunk_streaming(self.player.x, self.player.z)
+
+    def set_gesture_speeds(self, speeds: Dict[str, float]) -> None:
+        """Update gesture multipliers without changing classifier behavior."""
+        self.gesture_speeds = {
+            name: max(0.25, min(2.0, float(value)))
+            for name, value in speeds.items()
+        }
+
+    def gesture_speed(self, gesture: str) -> float:
+        """Return a live speed multiplier, defaulting to unchanged behavior."""
+        return self.gesture_speeds.get(gesture, 1.0)
 
     def _load_single_point_cloud(self, df: pd.DataFrame) -> None:
         """Builds the single-file point-cloud mesh and navigation bounds."""
@@ -441,7 +457,7 @@ class ExploreEnvironment:
         self.single_mesh.clearTexGen(TextureStage.getDefault())
         self.single_mesh.setRenderModeThickness(self.current_thickness, 1)
         self.single_entity = Entity(model=self.single_mesh)
-        self.single_entity.set_render_mode_perspective(False)
+        self.single_entity.set_render_mode_perspective(True)
         self.single_entity.set_render_mode_thickness(self.current_thickness)
         self.single_entity.setRenderModeThickness(self.current_thickness, 1)
 
@@ -674,7 +690,7 @@ class ExploreEnvironment:
         )
         self.overview_mesh.clearTexGen(TextureStage.getDefault())
         self.overview_entity = Entity(model=self.overview_mesh)
-        self.overview_entity.set_render_mode_perspective(False)
+        self.overview_entity.set_render_mode_perspective(True)
         self.overview_entity.set_render_mode_thickness(self.current_thickness)
 
         grid_gx = np.floor(xs / cell_size).astype(np.int32)
@@ -827,24 +843,33 @@ class ExploreEnvironment:
                 self.reset_player()
                 self.reset_cooldown = now + max(self.reset_cooldown_duration, 0.5)
         elif gesture == 'Zoom In':
-            self.zoom_target_fov = max(35.0, self.zoom_target_fov - 45.0 * time.dt)
+            self.zoom_target_fov = max(35.0, self.zoom_target_fov - 45.0 * self.gesture_speed('Zoom In') * time.dt)
         elif gesture == 'Zoom Out':
-            self.zoom_target_fov = min(110.0, self.zoom_target_fov + 45.0 * time.dt)
+            self.zoom_target_fov = min(110.0, self.zoom_target_fov + 45.0 * self.gesture_speed('Zoom Out') * time.dt)
         elif gesture == 'Rotate Left':
-            self.player.rotation_y -= self.turn_speed * time.dt
+            self.player.rotation_y -= self.turn_speed * self.gesture_speed(gesture) * time.dt
         elif gesture == 'Rotate Right':
-            self.player.rotation_y += self.turn_speed * time.dt
+            self.player.rotation_y += self.turn_speed * self.gesture_speed(gesture) * time.dt
         elif gesture == 'Rotate Up':
-            self.player.rotation_x -= self.pitch_speed * time.dt
+            self.player.rotation_x -= self.pitch_speed * self.gesture_speed(gesture) * time.dt
         elif gesture == 'Rotate Down':
-            self.player.rotation_x += self.pitch_speed * time.dt
+            self.player.rotation_x += self.pitch_speed * self.gesture_speed(gesture) * time.dt
         camera.fov = lerp(camera.fov, self.zoom_target_fov, min(1.0, time.dt * 10.0))
 
-    def update_movement_and_terrain(self, left_state: Dict) -> None:
+    def update_movement_and_terrain(
+        self,
+        left_state: Dict,
+        right_state: Optional[Dict] = None,
+    ) -> None:
         """Updates movement, flight, dynamic chunk streaming with LOD, and terrain hugging."""
         frame_start = _time.perf_counter()
         current_speed = self.flight_speed if self.is_flying else self.walk_speed
         left_gesture = left_state.get('gesture') if left_state.get('visible') else None
+        right_gesture = (
+            right_state.get('gesture')
+            if right_state and right_state.get('visible')
+            else None
+        )
 
         # Dynamic chunk streaming tick (throttled to ~15 Hz)
         if self.is_chunked:
@@ -859,13 +884,17 @@ class ExploreEnvironment:
         if left_state.get('visible'):
             if not self.is_flying:
                 if left_state.get('gesture') == 'Move Backward':
-                    self.player.position -= self.player.forward * current_speed * time.dt
+                    self.player.position -= self.player.forward * current_speed * self.gesture_speed('Move Backward') * time.dt
                 elif left_state.get('gesture') == 'Move Forward':
-                    self.player.position += self.player.forward * current_speed * time.dt
+                    self.player.position += self.player.forward * current_speed * self.gesture_speed('Move Forward') * time.dt
                 elif left_state.get('gesture') == 'Move Left':
-                    self.player.position -= self.player.right * current_speed * time.dt
+                    self.player.position -= self.player.right * current_speed * self.gesture_speed('Move Left') * time.dt
                 elif left_state.get('gesture') == 'Move Right':
-                    self.player.position += self.player.right * current_speed * time.dt
+                    self.player.position += self.player.right * current_speed * self.gesture_speed('Move Right') * time.dt
+            if right_gesture == 'Move Up':
+                self.player.y += self.vertical_speed * self.gesture_speed('Move Up') * time.dt
+            elif left_state.get('gesture') == 'Move Down':
+                self.player.y -= self.vertical_speed * self.gesture_speed('Move Down') * time.dt
 
         # Keyboard translation navigation (WASD)
         if held_keys['w']:
@@ -897,11 +926,6 @@ class ExploreEnvironment:
         self.player.rotation_x = clamp(self.player.rotation_x, -85.0, 85.0)
 
         if self.is_flying:
-            if left_state.get('visible'):
-                if left_state.get('gesture') == 'Move Up':
-                    self.player.y += self.vertical_speed * time.dt
-                elif left_state.get('gesture') == 'Move Down':
-                    self.player.y -= self.vertical_speed * time.dt
             if held_keys['space']:
                 self.player.y += self.vertical_speed * time.dt
             if held_keys['left shift'] or held_keys['c']:
@@ -946,13 +970,13 @@ class ExploreEnvironment:
         if self.is_flying:
             if left_state.get('visible'):
                 if left_state.get('gesture') == 'Move Backward':
-                    self.player.position -= self.player.forward * self.flight_speed * time.dt
+                    self.player.position -= self.player.forward * self.flight_speed * self.gesture_speed('Move Backward') * time.dt
                 elif left_state.get('gesture') == 'Move Forward':
-                    self.player.position += self.player.forward * self.flight_speed * time.dt
+                    self.player.position += self.player.forward * self.flight_speed * self.gesture_speed('Move Forward') * time.dt
                 elif left_state.get('gesture') == 'Move Left':
-                    self.player.position -= self.player.right * self.flight_speed * time.dt
+                    self.player.position -= self.player.right * self.flight_speed * self.gesture_speed('Move Left') * time.dt
                 elif left_state.get('gesture') == 'Move Right':
-                    self.player.position += self.player.right * self.flight_speed * time.dt
+                    self.player.position += self.player.right * self.flight_speed * self.gesture_speed('Move Right') * time.dt
             if self.player.y < ground_y + 1.8:
                 self.player.y = ground_y + 1.8
         else:

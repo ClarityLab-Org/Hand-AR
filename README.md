@@ -18,6 +18,15 @@ Hand-ArM2 is a real-time desktop application for controlling and manipulating 3D
 | Open palm             | Pause interaction  |
 | Peace sign            | Capture screenshot |
 
+Explore mode additionally supports two simple complementary vertical navigation
+gestures: both hands with open palms move up, while a centered open palm with
+the left hand moves down. The previous single-finger point up/down and
+single-right-hand Move Up gestures are no longer used. The first detected hand is acquired for
+2.5 seconds and then tracked by handedness, wrist continuity, and scale; another
+hand is ignored until the owner has been absent for 2 seconds.
+Explore-mode gesture speed multipliers are available in the loading scene,
+update live, and persist in the user's `~/.hand_ar_gesture_speeds.json`.
+
 **3D Model Support**
 
 - Search and download models directly from Sketchfab (free API key required)

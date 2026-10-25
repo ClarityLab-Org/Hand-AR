@@ -26,6 +26,7 @@ from ursina import *
 
 from handarm import config
 from handarm.engine.explore_core import ExploreEnvironment
+from handarm.engine.ui_common import GestureSpeedPanel
 from handarm.tracking.gestures import (
     compute_explore_features,
     classify_right_explore,
@@ -157,6 +158,15 @@ def _create_gesture_guide_texture() -> Texture:
         draw.text((330, y), desc, font=font_desc, fill=(255, 255, 255, 255))
         y += 48
 
+    y += 8
+    draw.line((36, y, width - 36, y), fill=(255, 220, 50, 150), width=2)
+    y += 14
+    draw.text((94, y), "BOTH HANDS", font=font_sec, fill=(255, 220, 50, 255))
+    y += 48
+    draw.text((42, y - 6), "👐", font=font_emoji_item, fill=(255, 255, 255, 255))
+    draw.text((105, y), "Both open palms", font=font_item, fill=(0, 225, 255, 255))
+    draw.text((400, y), ":  Move up", font=font_desc, fill=(255, 255, 255, 255))
+
     # Left Hand Section (Only requested gestures)
     y += 8
     draw.line((36, y, width - 36, y), fill=(0, 225, 255, 80), width=1)
@@ -172,6 +182,7 @@ def _create_gesture_guide_texture() -> Texture:
         ("⬇", "Move Backward", ":  Hand Below Center"),
         ("⬅", "Move Left", ":  Hand Left Center"),
         ("➡", "Move Right", ":  Hand Right Center"),
+        ("✋", "Open palm", ":  Move down"),
     ]
     for icon, name, desc in left_items:
         draw.text((42, y - 6), icon, font=font_emoji_item, fill=(255, 255, 255, 255))
@@ -333,9 +344,14 @@ class NavigationHUD:
             color=color.yellow,
             z=0.09,
         )
+        self.owner_text = Text(
+            parent=camera.ui, text="Hand: Acquiring...",
+            position=(-0.82, 0.42), origin=(-0.5, 0),
+            scale=0.72, color=color.orange, z=0.09,
+        )
         self.points_text = Text(
             parent=camera.ui,
-            text="Points: 0",
+            text="Loaded: 0 / 0 (0.0%)",
             position=(0.0, 0.47),
             origin=(0, 0),
             scale=0.95,
@@ -384,7 +400,8 @@ class NavigationHUD:
 
         return loaded, 0
 
-    def update(self, env: ExploreEnvironment, gesture: str, dt: float) -> None:
+    def update(self, env: ExploreEnvironment, gesture: str, dt: float,
+               owner_status: str = "Acquiring...") -> None:
         now = _time.monotonic()
         self.frame_times.append(now)
         cutoff = now - 1.0
@@ -392,9 +409,18 @@ class NavigationHUD:
             self.frame_times.popleft()
 
         loaded, _ = self._point_count(env)
-        self.points_text.text = f"Points: {loaded:,}"
+        total = int(getattr(env, "total_points", 0)) or self.max_points or loaded
+        loaded = min(loaded, total)
+        percent = min(100.0, loaded / total * 100.0) if total else 0.0
+        self.points_text.text = f"Loaded: {loaded:,} / {total:,} ({percent:.1f}%)"
         clean_gesture = gesture.replace("🖐️", "").replace("🖐", "").replace("👌", "").replace("✌️", "").replace("✌", "").replace("👍", "").strip()
         self.gesture_text.text = f"GESTURE: {clean_gesture or gesture}"
+        self.owner_text.text = f"Hand: {owner_status}"
+        self.owner_text.color = (
+            color.lime if owner_status == "Locked"
+            else color.red if owner_status == "Lost"
+            else color.orange
+        )
 
         if now - self.last_metrics_update >= self.UPDATE_INTERVAL:
             elapsed = self.frame_times[-1] - self.frame_times[0] if len(self.frame_times) > 1 else 0.0
@@ -452,6 +478,7 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
             gesture = classify_left_explore_standalone(features)
         return {
             'gesture': gesture,
+            'open_palm': features['open_palm'],
             'navigation': _navigation_gesture(gesture, features),
         }
 
@@ -530,12 +557,13 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         target,
         point_cloud=point_cloud,
         downsample_step=1,
-        point_thickness=config.POINT_THICKNESS,
+        point_thickness=max(3.0, config.POINT_THICKNESS),
         reset_cooldown_duration=0.0,
     )
+    speed_panel = GestureSpeedPanel(env.set_gesture_speeds)
+    env.set_gesture_speeds(speed_panel.values)
 
-    hud = NavigationHUD(max_points=point_cloud.attrs.get("point_count", len(point_cloud))
-                        if point_cloud is not None else 0)
+    hud = NavigationHUD(max_points=getattr(env, "total_points", 0))
 
     # High-contrast bottom status bar with dark backing pill for maximum legibility
     Entity(parent=camera.ui, model='quad', scale=(1.25, 0.05),
@@ -565,10 +593,14 @@ def main(point_cloud: Optional[pd.DataFrame] = None, target_path: Optional[str] 
         left, right = state['Left'], state['Right']
         active_hand = right if right['visible'] else left
         active_gesture = active_hand.get("gesture", "None")
-        hud.update(env, gesture_label(active_gesture), time.dt)
+        tracker_status = tracker.get_status()
+        hud.update(
+            env, gesture_label(active_gesture), time.dt,
+            tracker_status.get("owner_status", "Acquiring..."),
+        )
 
         env.update_steering(right)
-        env.update_movement_and_terrain(left)
+        env.update_movement_and_terrain(left, right)
 
     # -----------------------------------------------------------------------
     # Input handler
