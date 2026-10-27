@@ -17,16 +17,20 @@ import psutil
 import sys
 import time as _time
 from collections import deque
-from typing import Deque, List, Optional, Tuple
+from typing import Deque, Optional, Tuple
 
 import pandas as pd
-from PIL import Image, ImageDraw, ImageFont
 from direct.task import Task
 from panda3d.core import Texture as P3DTexture, WindowProperties
 from ursina import *
 
 from handarm import config
 from handarm.engine.explore_core import ExploreEnvironment
+from handarm.engine.hud_components import (
+    _create_gesture_guide_texture,
+    _load_ui_fonts,
+    _render_telemetry_hud,
+)
 from handarm.engine.ui_common import WINDOW_SIZE, safe_set_text
 from handarm.tracking.gestures import (
     compute_explore_features,
@@ -39,291 +43,15 @@ from handarm.tracking.gestures import (
 from handarm.tracking.hand_tracker import HandTracker
 
 
-def _load_emoji_font(size: int):
-    """Load a Unicode font that PIL can rasterize into the camera texture."""
-    candidates = (
-        "/usr/share/fonts/gdouros-symbola/Symbola.ttf",
-        "DejaVuSans.ttf",
-        "NotoSans-Regular.ttf",
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
-        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/google-noto-vf/NotoSans[wght].ttf",
-        "/usr/share/fonts/adwaita-sans-fonts/AdwaitaSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-    )
-    for candidate in candidates:
-        try:
-            return ImageFont.truetype(candidate, size)
-        except (OSError, IOError):
-            continue
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
-
-
-def _create_gesture_guide_texture() -> Texture:
-    """Renders a sharp, high-DPI HUD card with large prominent Unicode emojis and bold controls."""
-    width, height = 860, 830
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    # Deep dark solid backdrop with glowing neon cyan border
-    draw.rounded_rectangle(
-        (4, 4, width - 4, height - 4),
-        radius=22,
-        fill=(8, 14, 24, 248),
-        outline=(0, 225, 255, 235),
-        width=4,
-    )
-
-    # Search best fonts: bold sans-serif for text, large modern emoji font
-    font_paths_bold = (
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
-    )
-    font_paths_emoji = (
-        "/usr/share/fonts/google-noto-emoji-fonts/NotoEmoji-Regular.ttf",
-        "/usr/share/fonts/gdouros-symbola/Symbola.ttf",
-    )
-
-    font_title = font_sec = font_item = font_desc = None
-    for p in font_paths_bold:
-        if os.path.exists(p):
-            try:
-                font_title = ImageFont.truetype(p, 40)
-                font_sec = ImageFont.truetype(p, 34)
-                font_item = ImageFont.truetype(p, 28)
-                font_desc = ImageFont.truetype(p, 26)
-                break
-            except Exception:
-                continue
-
-    font_emoji_title = font_emoji_sec = font_emoji_item = None
-    for p in font_paths_emoji:
-        if os.path.exists(p):
-            try:
-                font_emoji_title = ImageFont.truetype(p, 48)
-                font_emoji_sec = ImageFont.truetype(p, 42)
-                font_emoji_item = ImageFont.truetype(p, 42)
-                break
-            except Exception:
-                continue
-
-    if font_title is None:
-        font_title = font_sec = font_item = font_desc = ImageFont.load_default()
-    if font_emoji_item is None:
-        font_emoji_title = font_emoji_sec = font_emoji_item = font_item
-
-    # Load custom palm hand icon if available
-    hand_icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "palm_hand_cropped.png")
-    custom_palm = None
-    custom_palm_left = None
-    if os.path.exists(hand_icon_path):
-        try:
-            raw_hand = Image.open(hand_icon_path).convert("RGBA")
-            h_target = 48
-            w_target = max(1, int(h_target * raw_hand.width / raw_hand.height))
-            custom_palm = raw_hand.resize((w_target, h_target), Image.Resampling.LANCZOS)
-            custom_palm_left = custom_palm.transpose(Image.FLIP_LEFT_RIGHT)
-        except Exception:
-            custom_palm = None
-
-    # Title header
-    draw.text((36, 18), "🎮", font=font_emoji_title, fill=(255, 220, 50, 255))
-    draw.text((100, 22), "HAND GESTURES", font=font_title, fill=(255, 220, 50, 255))
-    draw.line((36, 78, width - 36, 78), fill=(0, 225, 255, 150), width=2)
-
-    # Right Hand Section (With custom high-res palm icon)
-    if custom_palm is not None:
-        img.paste(custom_palm, (40, 92), custom_palm)
-    else:
-        draw.text((36, 94), "✋", font=font_emoji_sec, fill=(255, 160, 50, 255))
-    draw.text((94, 98), "RIGHT HAND", font=font_sec, fill=(255, 160, 50, 255))
-    right_items = [
-        ("🤏", "Pinch", ":  Zoom In"),
-        ("✌", "Peace Sign", ":  Zoom Out"),
-        ("👍", "Thumbs up", ":  Reset view"),
-        ("👈", "Palm Left", ":  Rotate left"),
-        ("👉", "Palm Right", ":  Rotate right"),
-        ("☝", "Palm up", ":  Rotate up"),
-        ("👇", "Palm down", ":  Rotate down"),
-    ]
-    y = 152
-    for icon, name, desc in right_items:
-        draw.text((42, y - 6), icon, font=font_emoji_item, fill=(255, 255, 255, 255))
-        draw.text((105, y), name, font=font_item, fill=(0, 225, 255, 255))
-        draw.text((330, y), desc, font=font_desc, fill=(255, 255, 255, 255))
-        y += 48
-
-    # Left Hand Section (Only requested gestures)
-    y += 8
-    draw.line((36, y, width - 36, y), fill=(0, 225, 255, 80), width=1)
-    y += 14
-    if custom_palm_left is not None:
-        img.paste(custom_palm_left, (40, y - 2), custom_palm_left)
-    else:
-        draw.text((36, y - 6), "✋", font=font_emoji_sec, fill=(0, 225, 255, 255))
-    draw.text((94, y + 4), "LEFT HAND", font=font_sec, fill=(0, 225, 255, 255))
-    y += 52
-    left_items = [
-        ("⬆", "Move Forward", ":  Hand Above Center"),
-        ("⬇", "Move Backward", ":  Hand Below Center"),
-        ("⬅", "Move Left", ":  Hand Left Center"),
-        ("➡", "Move Right", ":  Hand Right Center"),
-    ]
-    for icon, name, desc in left_items:
-        draw.text((42, y - 6), icon, font=font_emoji_item, fill=(255, 255, 255, 255))
-        draw.text((105, y), name, font=font_item, fill=(0, 225, 255, 255))
-        draw.text((400, y), desc, font=font_desc, fill=(255, 255, 255, 255))
-        y += 48
-
-    draw.line((36, y + 2, width - 36, y + 2), fill=(0, 225, 255, 80), width=1)
-    draw.text((42, y + 14), "👐", font=font_emoji_item, fill=(255, 255, 255, 255))
-    draw.text((105, y + 18), "BOTH HAND", font=font_item, fill=(255, 220, 50, 255))
-    draw.text((330, y + 18), ":  Palms = Move Down | Palm + 👍 = Move Up",
-              font=font_desc, fill=(255, 255, 255, 255))
-
-    # Footer controls
-    y += 10
-    draw.line((36, y, width - 36, y), fill=(0, 220, 255, 120), width=2)
-    y += 16
-    draw.text((36, y), "[H] Hide/Show Guide  •  [C] Color Palette", font=font_desc, fill=(160, 215, 255, 255))
-
-    tex = Texture(img)
-    tex.filtering = True
-    return tex
-
-
-def _load_ui_fonts() -> Tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
-    """Load bold sans-serif fonts for telemetry HUD."""
-    font_paths = (
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/google-noto/NotoSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
-        "/usr/share/fonts/google-noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    )
-    for p in font_paths:
-        if os.path.exists(p):
-            try:
-                return ImageFont.truetype(p, 14), ImageFont.truetype(p, 16)
-            except Exception:
-                continue
-    try:
-        return ImageFont.load_default(size=14), ImageFont.load_default(size=16)
-    except TypeError:
-        f = ImageFont.load_default()
-        return f, f
-
-
-def _render_telemetry_hud(
-    fps: float,
-    cpu: float,
-    ram: float,
-    fps_history: List[float],
-    cpu_history: List[float],
-    ram_history: List[float],
-    font_label: ImageFont.ImageFont,
-    font_val: ImageFont.ImageFont,
-) -> Image.Image:
-    """Render high-contrast telemetry card with sparkline graphs for FPS, CPU, RAM."""
-    W, H = 600, 84
-    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    # Outer container with rounded corners and border
-    draw.rounded_rectangle(
-        (0, 0, W - 1, H - 1),
-        radius=10,
-        fill=(12, 16, 25, 225),
-        outline=(42, 58, 82, 220),
-        width=2,
-    )
-
-    col_w = W // 3
-    metrics = [
-        ("FPS", f"{fps:.1f}", (57, 255, 20), fps_history, 144.0),
-        ("CPU", f"{cpu:.1f}%", (255, 167, 38), cpu_history, 100.0),
-        ("RAM", f"{ram:.1f}%", (41, 182, 246), ram_history, 100.0),
-    ]
-
-    for i, (label, val_str, color_rgb, history, max_val) in enumerate(metrics):
-        x_off = i * col_w
-        if i > 0:
-            draw.line((x_off, 10, x_off, H - 10), fill=(40, 54, 76, 180), width=1)
-
-        # Label and Value
-        draw.text((x_off + 12, 8), label, font=font_label, fill=(160, 180, 205, 255))
-        draw.text((x_off + 62, 7), val_str, font=font_val, fill=color_rgb + (255,))
-
-        # Sparkline area
-        gx0 = x_off + 10
-        gy0 = 34
-        gw = col_w - 20
-        gh = 40
-
-        # Graph background box
-        draw.rounded_rectangle(
-            (gx0, gy0, gx0 + gw, gy0 + gh),
-            radius=4,
-            fill=(8, 11, 18, 210),
-            outline=(32, 44, 64, 160),
-            width=1,
-        )
-
-        # 50% dashed / subtle reference line
-        mid_y = gy0 + gh // 2
-        for dx in range(0, gw, 8):
-            draw.line((gx0 + dx, mid_y, min(gx0 + dx + 4, gx0 + gw), mid_y), fill=(35, 48, 70, 140), width=1)
-
-        # Plot points
-        pts = []
-        n = len(history)
-        step = gw / max(1, n - 1) if n > 1 else gw
-        for idx, v in enumerate(history):
-            norm = max(0.0, min(1.0, v / max_val))
-            px = gx0 + idx * step
-            py = (gy0 + gh - 2) - norm * (gh - 4)
-            pts.append((px, py))
-
-        if len(pts) >= 2:
-            poly = [(gx0, gy0 + gh - 1)] + pts + [(gx0 + gw, gy0 + gh - 1)]
-            fill_col = color_rgb + (50,)
-            draw.polygon(poly, fill=fill_col)
-            draw.line(pts, fill=color_rgb + (240,), width=2)
-            last_x, last_y = pts[-1]
-            draw.ellipse(
-                (last_x - 3, last_y - 3, last_x + 3, last_y + 3),
-                fill=(255, 255, 255, 255),
-                outline=color_rgb,
-                width=1,
-            )
-        elif pts:
-            last_x, last_y = pts[-1]
-            draw.ellipse(
-                (last_x - 3, last_y - 3, last_x + 3, last_y + 3),
-                fill=(255, 255, 255, 255),
-                outline=color_rgb,
-                width=1,
-            )
-
-    return img
-
 
 class NavigationHUD:
     """Stable top overlay for gesture state, point loading, and performance telemetry."""
 
     UPDATE_INTERVAL = 0.4
 
-    def __init__(self, max_points: int) -> None:
+    def __init__(self, max_points: int, system_monitor=None) -> None:
         self.max_points = max_points
+        self.system_monitor = system_monitor
         self.started_at = _time.monotonic()
         self.last_metrics_update = self.started_at
         self.frame_times: Deque[float] = deque()
@@ -419,8 +147,11 @@ class NavigationHUD:
         if now - self.last_metrics_update >= self.UPDATE_INTERVAL:
             elapsed = self.frame_times[-1] - self.frame_times[0] if len(self.frame_times) > 1 else 0.0
             fps = (len(self.frame_times) - 1) / elapsed if elapsed > 0 else (1.0 / dt if dt > 0 else 60.0)
-            cpu = psutil.cpu_percent(interval=None)
-            ram = psutil.virtual_memory().percent
+            if self.system_monitor is None:
+                cpu = psutil.cpu_percent(interval=None)
+                ram = psutil.virtual_memory().percent
+            else:
+                _, cpu, ram = self.system_monitor.sample(fps)
 
             self.fps_history.append(fps)
             self.cpu_history.append(cpu)
@@ -580,7 +311,7 @@ def main(point_cloud: Optional[pd.DataFrame] = None,
         parent=camera.ui,
         model='quad',
         texture=_create_gesture_guide_texture(),
-        scale=(0.48, 0.46),
+        scale=(0.45, 0.43),
         position=(-0.64, 0.135),
         z=0.05,
     )
