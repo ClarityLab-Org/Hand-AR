@@ -67,16 +67,19 @@ Examples:
             input_path = candidates[0]
             print(f"Auto-detected LiDAR file: {input_path}")
         else:
-            from handarm.engine.explore_standalone import main as explore_main
-            explore_main(model_path=args.model_path)
+            from handarm.engine.unified_viewer import main as explore_main
+            explore_main(model_path=args.model_path, initial_mode="pointcloud")
             return
 
     if not os.path.exists(input_path):
         parser.error(f"File not found: {input_path}")
 
     if os.path.splitext(input_path)[1].lower() not in (".laz", ".las"):
-        from handarm.engine.explore_standalone import main as explore_main
-        explore_main(target_path=input_path, model_path=args.model_path)
+        from handarm.engine.unified_viewer import main as explore_main
+        explore_main(
+            target_path=input_path, model_path=args.model_path,
+            initial_mode="pointcloud",
+        )
         return
 
     try:
@@ -126,9 +129,12 @@ Examples:
         from scripts.build_spatial_chunks import build_spatial_chunks
         build_spatial_chunks(laz_path=input_path, output_dir=chunks_dir)
 
-    from handarm.engine.explore_standalone import main as explore_main
+    from handarm.engine.unified_viewer import main as explore_main
     if chunks_dir is not None:
-        explore_main(target_path=chunks_dir, model_path=args.model_path)
+        explore_main(
+            target_path=chunks_dir, model_path=args.model_path,
+            initial_mode="pointcloud",
+        )
         return
 
     from handarm.geometry.laz_loader import load_laz_to_dataframe
@@ -147,6 +153,7 @@ Examples:
         point_cloud=point_cloud,
         target_path=input_path,
         model_path=args.model_path,
+        initial_mode="pointcloud",
     )
 
 

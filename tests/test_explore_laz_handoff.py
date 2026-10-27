@@ -5,7 +5,7 @@ import pandas as pd
 
 def test_explore_passes_loaded_dataframe_to_engine(monkeypatch, tmp_path):
     import explore
-    from handarm.engine import explore_standalone
+    from handarm.engine import unified_viewer
     from handarm.geometry import laz_loader
 
     laz_path = tmp_path / "scan.laz"
@@ -22,7 +22,7 @@ def test_explore_passes_loaded_dataframe_to_engine(monkeypatch, tmp_path):
         laz_loader, "load_laz_to_dataframe", lambda *args, **kwargs: point_cloud
     )
     monkeypatch.setattr(
-        explore_standalone, "main", lambda **kwargs: forwarded.update(kwargs)
+        unified_viewer, "main", lambda **kwargs: forwarded.update(kwargs)
     )
 
     explore.main()
@@ -30,3 +30,4 @@ def test_explore_passes_loaded_dataframe_to_engine(monkeypatch, tmp_path):
     assert forwarded["point_cloud"] is point_cloud
     assert forwarded["target_path"] == str(laz_path)
     assert forwarded["model_path"] is None
+    assert forwarded["initial_mode"] == "pointcloud"

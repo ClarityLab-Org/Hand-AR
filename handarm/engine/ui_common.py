@@ -10,6 +10,8 @@ from typing import Optional
 import cv2
 import mediapipe as mp
 import numpy as np
+import psutil
+import time
 from panda3d.core import Texture as P3DTexture
 from ursina import Entity, Text, camera, color
 
@@ -28,6 +30,27 @@ def safe_set_text(widget: Optional[Entity], value: str) -> None:
         widget.text = value
     except (AssertionError, AttributeError, RuntimeError):
         return
+
+
+class SystemMonitor:
+    """Rate-limited system metrics shared by the viewer modes."""
+
+    UPDATE_INTERVAL = 0.4
+
+    def __init__(self) -> None:
+        self.last_update = 0.0
+        self.fps, self.cpu, self.ram = 60.0, 15.0, 50.0
+        self.updated = False
+
+    def sample(self, fps: float):
+        now = time.monotonic()
+        self.updated = now - self.last_update >= self.UPDATE_INTERVAL
+        if self.updated:
+            self.fps = fps
+            self.cpu = psutil.cpu_percent(interval=None)
+            self.ram = psutil.virtual_memory().percent
+            self.last_update = now
+        return self.fps, self.cpu, self.ram
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +115,15 @@ class CameraFeedUI:
     label positioned at the bottom-left of the viewport.
     """
 
-    def __init__(self, feed_w: int = None, feed_h: int = None) -> None:
+    def __init__(
+        self, feed_w: int = None, feed_h: int = None, *,
+        feed_position=(-0.67, -0.335), live_position=(-0.67, -0.168),
+        border_position=None, live_scale=0.9,
+    ) -> None:
         self.feed_w: int = feed_w or config.FEED_WIDTH
         self.feed_h: int = feed_h or config.FEED_HEIGHT
+        if border_position is None:
+            border_position = feed_position
 
         # Panda3D texture for direct RAM writes
         self._p3d_tex = P3DTexture('camera_feed')
@@ -108,21 +137,35 @@ class CameraFeedUI:
         memoryview(buf).cast('B')[:] = b'\x00' * (self.feed_w * self.feed_h * 3)
 
         # UI entities
-        Entity(
+        self._border = Entity(
             parent=camera.ui, model='quad',
-            scale=(0.445, 0.315), position=(-0.67, -0.335),
+            scale=(0.445, 0.315), position=border_position,
             color=color.color(0, 0, 0.35), origin=(0, 0), z=0.01,
         )
         self._feed_view = Entity(
             parent=camera.ui, model='quad',
-            scale=(0.44, 0.31), position=(-0.67, -0.335), origin=(0, 0),
+            scale=(0.44, 0.31), position=feed_position, origin=(0, 0),
         )
         self._feed_view.model.setTexture(self._p3d_tex)
-        Text(
+        self._live_text = Text(
             "LIVE", parent=camera.ui,
-            position=(-0.67, -0.168), origin=(0, 0),
-            scale=0.9, color=color.red,
+            position=live_position, origin=(0, 0),
+            scale=live_scale, color=color.red,
         )
+
+    def set_layout(
+        self, feed_position=(-0.67, -0.335), live_position=(-0.67, -0.168),
+        border_position=None, feed_scale=(0.44, 0.31),
+        border_scale=(0.445, 0.315), live_scale=0.9,
+    ) -> None:
+        if border_position is None:
+            border_position = feed_position
+        self._border.position = border_position
+        self._border.scale = border_scale
+        self._feed_view.position = feed_position
+        self._feed_view.scale = feed_scale
+        self._live_text.position = live_position
+        self._live_text.scale = live_scale
 
     def upload_frame(self, frame: np.ndarray) -> None:
         """Resizes and uploads a video frame to the UI texture.

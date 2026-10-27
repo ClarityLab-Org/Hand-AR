@@ -32,18 +32,28 @@ class HandTracker:
         detection_confidence: float = 0.7,
         max_hands: int = 2,
         camera_index: int = 0,
+        tracking_confidence: Optional[float] = None,
+        include_landmarks: bool = False,
     ) -> None:
         self._mp_hands = mp.solutions.hands
         self._mp_drawing = mp.solutions.drawing_utils
+        hands_options = {
+            "max_num_hands": max_hands,
+            "min_detection_confidence": detection_confidence,
+        }
+        if tracking_confidence is not None:
+            hands_options["min_tracking_confidence"] = tracking_confidence
         self._hands = self._mp_hands.Hands(
-            max_num_hands=max_hands,
-            min_detection_confidence=detection_confidence,
+            **hands_options,
         )
         self._cap = cv2.VideoCapture(camera_index)
         self._classify_hand = classify_hand
         self._annotate_frame = annotate_frame
+        self._include_landmarks = include_landmarks
+        self._stabilize_gestures = True
 
         self._lock = threading.Lock()
+        self._classifier_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._state: Dict[str, Dict[str, Any]] = {
             'Left': {'visible': False, 'x': 0.5, 'y': 0.5, 'gesture': 'None'},
@@ -52,6 +62,7 @@ class HandTracker:
         self._gesture_candidates = {'Left': None, 'Right': None}
         self._gesture_candidate_counts = {'Left': 0, 'Right': 0}
         self._latest_frame: Optional[np.ndarray] = None
+        self._frame_id = 0
         camera_connected = bool(getattr(self._cap, 'isOpened', lambda: True)())
         self._status: Dict[str, Any] = {
             'running': True,
@@ -77,6 +88,25 @@ class HandTracker:
             if self._latest_frame is not None:
                 return self._latest_frame.copy()
             return None
+
+    def get_snapshot(self):
+        """Return one consistent hand state, annotated frame, and frame number."""
+        with self._lock:
+            frame = self._latest_frame.copy() if self._latest_frame is not None else None
+            return copy.deepcopy(self._state), frame, self._frame_id
+
+    def set_classifier(
+        self, classify_hand: Callable, stabilize_gestures: bool,
+        include_landmarks: Optional[bool] = None,
+    ) -> None:
+        """Switch the active mode's classifier without restarting MediaPipe or the camera."""
+        with self._classifier_lock:
+            self._classify_hand = classify_hand
+            self._stabilize_gestures = stabilize_gestures
+            if include_landmarks is not None:
+                self._include_landmarks = include_landmarks
+            self._gesture_candidates = {'Left': None, 'Right': None}
+            self._gesture_candidate_counts = {'Left': 0, 'Right': 0}
 
     def get_status(self) -> Dict[str, Any]:
         """Returns a thread-safe copy of camera and worker health information."""
@@ -123,19 +153,29 @@ class HandTracker:
                         for idx, hand_lms in enumerate(results.multi_hand_landmarks):
                             hand_type = results.multi_handedness[idx].classification[0].label
                             visible_hands.add(hand_type)
-                            hand_data = self._classify_hand(hand_lms.landmark, hand_type)
-                            gesture = hand_data.get('gesture', 'None')
-                            if gesture == self._gesture_candidates[hand_type]:
-                                self._gesture_candidate_counts[hand_type] += 1
-                            else:
-                                self._gesture_candidates[hand_type] = gesture
-                                self._gesture_candidate_counts[hand_type] = 1
-                            previous = self._state[hand_type].get('gesture', 'None')
-                            if self._gesture_candidate_counts[hand_type] < 2:
-                                hand_data['gesture'] = previous
-                                hand_data['navigation'] = self._state[hand_type].get(
-                                    'navigation', '🖐️ Neutral / Idle'
+                            with self._classifier_lock:
+                                classify_hand = self._classify_hand
+                                stabilize_gestures = self._stabilize_gestures
+                                include_landmarks = self._include_landmarks
+                            hand_data = classify_hand(hand_lms.landmark, hand_type)
+                            if include_landmarks:
+                                hand_data['landmarks'] = tuple(
+                                    (point.x, point.y, point.z)
+                                    for point in hand_lms.landmark
                                 )
+                            gesture = hand_data.get('gesture', 'None')
+                            if stabilize_gestures:
+                                if gesture == self._gesture_candidates[hand_type]:
+                                    self._gesture_candidate_counts[hand_type] += 1
+                                else:
+                                    self._gesture_candidates[hand_type] = gesture
+                                    self._gesture_candidate_counts[hand_type] = 1
+                                previous = self._state[hand_type].get('gesture', 'None')
+                                if self._gesture_candidate_counts[hand_type] < 2:
+                                    hand_data['gesture'] = previous
+                                    hand_data['navigation'] = self._state[hand_type].get(
+                                        'navigation', '🖐️ Neutral / Idle'
+                                    )
                             hand_data['visible'] = True
                             hand_data['x'] = hand_lms.landmark[0].x
                             hand_data['y'] = hand_lms.landmark[0].y
@@ -152,6 +192,7 @@ class HandTracker:
                     with self._lock:
                         self._state = new_state
                         self._latest_frame = img_rgb
+                        self._frame_id += 1
                     self._stop_event.wait(0.01)
                 except Exception as exc:
                     # Keep the daemon alive and make unexpected frame errors observable.
