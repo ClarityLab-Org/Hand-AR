@@ -202,23 +202,6 @@ def launch_ursina(model_path: str, mode: str) -> None:
                      cwd=PROJECT_DIR)
 
 
-def _default_model_path() -> str | None:
-    """Choose a stable local model for point-cloud explorer launches."""
-    models_dir = os.path.join(PROJECT_DIR, "models")
-    preferred = os.path.join(models_dir, "Old_Rusty_Car.glb")
-    if os.path.isfile(preferred):
-        return preferred
-
-    candidates = []
-    for current, _, files in os.walk(models_dir):
-        candidates.extend(
-            os.path.join(current, name)
-            for name in files
-            if os.path.splitext(name)[1].lower() in (".obj", ".bam", ".glb")
-        )
-    return min(candidates, key=str.casefold) if candidates else None
-
-
 def _local_data_assets(query: str = "") -> list:
     """Find local point clouds, chunk datasets, and models in the data folders."""
     assets = []
@@ -274,11 +257,6 @@ def _launch_local_asset(path: str, mode: str) -> None:
     if mode == "explore":
         explore_file = os.path.join(PROJECT_DIR, "explore.py")
         command = [sys.executable, explore_file, path]
-        model_path = _default_model_path()
-        if model_path:
-            command.extend(["--model-path", model_path])
-        else:
-            print("Warning: no local .obj, .bam, or .glb model found; launching point cloud only.")
         subprocess.Popen(command, cwd=PROJECT_DIR)
     else:
         launch_ursina(path, mode)
