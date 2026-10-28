@@ -191,15 +191,28 @@ class HeaderCanvas(tk.Canvas):
 # Launcher function
 # ---------------------------------------------------------------------------
 
-def launch_ursina(model_path: str, mode: str) -> None:
+def _close_launcher_when_viewer_exits(root: tk.Tk, process: subprocess.Popen) -> None:
+    def check_process() -> None:
+        if process.poll() is None:
+            root.after(100, check_process)
+        else:
+            root.destroy()
+
+    root.after(100, check_process)
+
+
+def launch_ursina(model_path: str, mode: str, root: tk.Tk) -> None:
     """Launches the Ursina 3D viewer subprocess with selected model and mode."""
     interaction_file = os.path.join(PROJECT_DIR, "trial2.py")
     if not os.path.exists(interaction_file):
         messagebox.showerror("Error", "trial2.py not found")
         return
 
-    subprocess.Popen([sys.executable, interaction_file, model_path, mode],
-                     cwd=PROJECT_DIR)
+    process = subprocess.Popen(
+        [sys.executable, interaction_file, model_path, mode],
+        cwd=PROJECT_DIR,
+    )
+    _close_launcher_when_viewer_exits(root, process)
 
 
 def _local_data_assets(query: str = "") -> list:
@@ -252,14 +265,15 @@ def _local_data_assets(query: str = "") -> list:
     return sorted(assets, key=lambda asset: (asset["name"].casefold(), asset["location"]))
 
 
-def _launch_local_asset(path: str, mode: str) -> None:
+def _launch_local_asset(path: str, mode: str, root: tk.Tk) -> None:
     """Launch a selected local point cloud or 3D model."""
     if mode == "explore":
         explore_file = os.path.join(PROJECT_DIR, "explore.py")
         command = [sys.executable, explore_file, path]
-        subprocess.Popen(command, cwd=PROJECT_DIR)
+        process = subprocess.Popen(command, cwd=PROJECT_DIR)
+        _close_launcher_when_viewer_exits(root, process)
     else:
-        launch_ursina(path, mode)
+        launch_ursina(path, mode, root)
 
 
 def load_laz_for_gui(parent: tk.Misc, laz_path: str, **kwargs):
@@ -415,7 +429,7 @@ def open_model_selector(root: tk.Tk) -> None:
                 path = m["path"]
                 mode = m["mode"]
                 _close_selector()
-                _launch_local_asset(path, mode)
+                _launch_local_asset(path, mode, root)
                 return
 
             search_btn.config(state="disabled")
@@ -437,7 +451,7 @@ def open_model_selector(root: tk.Tk) -> None:
                     _close_selector()
                     mode = m.get("mode", "inspect")
                     print(f"Launching {mode.upper()} Mode:", path)
-                    launch_ursina(path, mode)
+                    launch_ursina(path, mode, root)
                 else:
                     status.config(text="Download failed — try another model",
                                   fg=ORANGE)

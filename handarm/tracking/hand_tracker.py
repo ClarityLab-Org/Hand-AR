@@ -2,6 +2,7 @@
 
 import copy
 import threading
+import time
 from typing import Any, Callable, Dict, Optional
 
 import cv2
@@ -36,6 +37,7 @@ class HandTracker:
         camera_index: int = 0,
         tracking_confidence: Optional[float] = None,
         include_landmarks: bool = False,
+        lock_window_seconds: float = 5.0,
     ) -> None:
         self._mp_hands = mp.solutions.hands
         self._mp_drawing = mp.solutions.drawing_utils
@@ -162,6 +164,64 @@ class HandTracker:
         with self._lock:
             self._status.update(updates)
 
+    def _match_and_lock_hands(self, results):
+        """Match detected hands to locked left/right slots and reject intruders."""
+        detections: Dict[str, list] = {'Left': [], 'Right': []}
+        landmarks = getattr(results, 'multi_hand_landmarks', None) or []
+        handedness = getattr(results, 'multi_handedness', None) or []
+
+        for hand_lms, hand_type_data in zip(landmarks, handedness):
+            hand_type = hand_type_data.classification[0].label
+            if hand_type not in detections or not hand_lms.landmark:
+                continue
+            wrist = hand_lms.landmark[0]
+            detections[hand_type].append(((wrist.x, wrist.y), hand_lms, hand_type_data))
+
+        matched_slots: Dict[str, Dict[str, Any]] = {}
+        filtered_lms = []
+        filtered_handedness = []
+        for hand_type, slot in self._locked_slots.items():
+            candidates = detections[hand_type]
+            candidate = None
+
+            if slot['locked'] and slot['last_pos'] is not None:
+                last_x, last_y = slot['last_pos']
+                nearby = [
+                    item for item in candidates
+                    if ((item[0][0] - last_x) ** 2 + (item[0][1] - last_y) ** 2)
+                    ** 0.5 <= self._max_jump_distance
+                ]
+                if nearby:
+                    candidate = min(
+                        nearby,
+                        key=lambda item: (
+                            (item[0][0] - last_x) ** 2
+                            + (item[0][1] - last_y) ** 2
+                        ),
+                    )
+
+            elif candidates:
+                candidate = candidates[0]
+
+            if candidate is None:
+                if slot['locked']:
+                    slot['lost_frames'] += 1
+                    if slot['lost_frames'] >= self._lock_grace_frames:
+                        self._locked_slots[hand_type] = {
+                            'locked': False,
+                            'last_pos': None,
+                            'lost_frames': 0,
+                        }
+                continue
+
+            pos, hand_lms, hand_type_data = candidate
+            slot.update(locked=True, last_pos=pos, lost_frames=0)
+            matched_slots[hand_type] = {'pos': pos}
+            filtered_lms.append(hand_lms)
+            filtered_handedness.append(hand_type_data)
+
+        return matched_slots, filtered_lms, filtered_handedness
+
     def _update_loop(self) -> None:
         """Background thread: continuously captures frames and classifies gestures."""
         try:
@@ -207,11 +267,9 @@ class HandTracker:
                         },
                     }
 
-                    visible_hands = set()
-                    if results.multi_hand_landmarks:
-                        for idx, hand_lms in enumerate(results.multi_hand_landmarks):
-                            hand_type = results.multi_handedness[idx].classification[0].label
-                            visible_hands.add(hand_type)
+                    if filtered_lms:
+                        for idx, hand_lms in enumerate(filtered_lms):
+                            hand_type = filtered_handedness[idx].classification[0].label
                             with self._classifier_lock:
                                 classify_hand = self._classify_hand
                                 stabilize_gestures = self._stabilize_gestures
