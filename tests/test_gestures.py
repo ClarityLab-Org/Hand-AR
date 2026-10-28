@@ -9,6 +9,7 @@ from handarm.tracking.gestures import (
     compute_index_up_distance,
     compute_index_down,
     compute_thumbs_up,
+    classify_both_hands,
     classify_right_explore,
     classify_left_explore_trial2,
     classify_left_explore_standalone
@@ -206,6 +207,15 @@ def test_compute_thumbs_up():
     feats_05 = compute_explore_features(lm_05)
     assert compute_thumbs_up(feats_05, margin=0.08) is False
     assert compute_thumbs_up(feats_05, margin=0.05) is True
+
+def test_classify_both_hands_vertical_navigation():
+    right_palm = {'open_palm': True}
+    left_palm = {'open_palm': True, 'thumbs_up': False}
+    left_thumbs_up = {'open_palm': False, 'thumbs_up': True}
+
+    assert classify_both_hands(left_palm, right_palm) == 'Both hand Move Down'
+    assert classify_both_hands(left_thumbs_up, right_palm) == 'Both hand Move Up'
+    assert classify_both_hands(left_palm, {'open_palm': False}) == 'None'
 
 def test_classify_right_explore():
     """Test right hand explore classification."""

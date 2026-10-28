@@ -52,3 +52,5 @@ models/iitj_campus.csv
 models/iitj_chunks/*.npz
 models/*_chunks/*.npz
 /iitj_data
+
+/backup

@@ -5,17 +5,52 @@ Provides camera feed rendering, performance monitoring overlay,
 hand-registration initialization overlay, and skeleton drawing.
 """
 
+from typing import Optional
+
 import cv2
 import mediapipe as mp
 import numpy as np
+import psutil
+import time
 from panda3d.core import Texture as P3DTexture
-from ursina import Button, Entity, Slider, Text, camera, color
+from ursina import Entity, Text, camera, color
 
 from handarm import config
-from handarm.engine.speed_settings import (
-    GESTURE_SPEED_DEFAULTS, load_gesture_speeds, reset_gesture_speeds,
-    save_gesture_speeds,
-)
+
+WINDOW_SIZE = (1600, 900)
+
+
+def safe_set_text(widget: Optional[Entity], value: str) -> None:
+    """Set entity text only while its Panda node is alive and the value changed."""
+    if widget is None:
+        return
+    try:
+        if widget.isEmpty() or widget.text == value:
+            return
+        widget.text = value
+    except (AssertionError, AttributeError, RuntimeError):
+        return
+
+
+class SystemMonitor:
+    """Rate-limited system metrics shared by the viewer modes."""
+
+    UPDATE_INTERVAL = 0.4
+
+    def __init__(self) -> None:
+        self.last_update = 0.0
+        self.fps, self.cpu, self.ram = 60.0, 15.0, 50.0
+        self.updated = False
+
+    def sample(self, fps: float):
+        now = time.monotonic()
+        self.updated = now - self.last_update >= self.UPDATE_INTERVAL
+        if self.updated:
+            self.fps = fps
+            self.cpu = psutil.cpu_percent(interval=None)
+            self.ram = psutil.virtual_memory().percent
+            self.last_update = now
+        return self.fps, self.cpu, self.ram
 
 
 # ---------------------------------------------------------------------------
@@ -80,9 +115,15 @@ class CameraFeedUI:
     label positioned at the bottom-left of the viewport.
     """
 
-    def __init__(self, feed_w: int = None, feed_h: int = None) -> None:
+    def __init__(
+        self, feed_w: int = None, feed_h: int = None, *,
+        feed_position=(-0.67, -0.335), live_position=(-0.67, -0.168),
+        border_position=None, live_scale=0.9,
+    ) -> None:
         self.feed_w: int = feed_w or config.FEED_WIDTH
         self.feed_h: int = feed_h or config.FEED_HEIGHT
+        if border_position is None:
+            border_position = feed_position
 
         # Panda3D texture for direct RAM writes
         self._p3d_tex = P3DTexture('camera_feed')
@@ -96,21 +137,35 @@ class CameraFeedUI:
         memoryview(buf).cast('B')[:] = b'\x00' * (self.feed_w * self.feed_h * 3)
 
         # UI entities
-        Entity(
+        self._border = Entity(
             parent=camera.ui, model='quad',
-            scale=(0.445, 0.315), position=(-0.67, -0.335),
+            scale=(0.445, 0.315), position=border_position,
             color=color.color(0, 0, 0.35), origin=(0, 0), z=0.01,
         )
         self._feed_view = Entity(
             parent=camera.ui, model='quad',
-            scale=(0.44, 0.31), position=(-0.67, -0.335), origin=(0, 0),
+            scale=(0.44, 0.31), position=feed_position, origin=(0, 0),
         )
         self._feed_view.model.setTexture(self._p3d_tex)
-        Text(
+        self._live_text = Text(
             "LIVE", parent=camera.ui,
-            position=(-0.67, -0.168), origin=(0, 0),
-            scale=0.9, color=color.red,
+            position=live_position, origin=(0, 0),
+            scale=live_scale, color=color.red,
         )
+
+    def set_layout(
+        self, feed_position=(-0.67, -0.335), live_position=(-0.67, -0.168),
+        border_position=None, feed_scale=(0.44, 0.31),
+        border_scale=(0.445, 0.315), live_scale=0.9,
+    ) -> None:
+        if border_position is None:
+            border_position = feed_position
+        self._border.position = border_position
+        self._border.scale = border_scale
+        self._feed_view.position = feed_position
+        self._feed_view.scale = feed_scale
+        self._live_text.position = live_position
+        self._live_text.scale = live_scale
 
     def upload_frame(self, frame: np.ndarray) -> None:
         """Resizes and uploads a video frame to the UI texture.
@@ -153,69 +208,9 @@ class PerformanceUI:
 
     def update(self, fps: int, cpu: float, ram: float) -> None:
         """Updates the performance text values."""
-        self.fps_text.text = f"FPS: {fps}"
-        self.cpu_text.text = f"CPU: {cpu:.0f}%"
-        self.ram_text.text = f"RAM: {ram:.0f}%"
-
-
-class GestureSpeedPanel:
-    """Live, persistent speed controls shown while explore mode loads."""
-
-    def __init__(self, on_change=None) -> None:
-        self.values = load_gesture_speeds()
-        self.on_change = on_change
-        self.sliders = {}
-        self.value_text = {}
-        self.panel = Entity(
-            parent=camera.ui, model="quad", scale=(0.43, 0.82),
-            position=(0.53, 0.0), color=color.color(0, 0, 0.72, 0.92),
-            z=0.11,
-        )
-        Text("GESTURE SPEEDS (1.00x default)", parent=camera.ui,
-             position=(0.34, 0.37), scale=0.8, color=color.cyan, z=0.1)
-        names = list(GESTURE_SPEED_DEFAULTS)
-        for idx, gesture in enumerate(names):
-            column = idx // 7
-            row = idx % 7
-            x = 0.35 + column * 0.21
-            y = 0.31 - row * 0.085
-            Text(gesture, parent=camera.ui, position=(x, y), scale=0.52,
-                 color=color.white, z=0.1)
-            slider = Slider(
-                min=0.25, max=2.0, default=self.values[gesture], step=0.05,
-                parent=camera.ui, position=(x + 0.045, y - 0.032),
-                scale=0.12, z=0.1,
-            )
-            value_text = Text(
-                f"{self.values[gesture]:.2f}x", parent=camera.ui,
-                position=(x + 0.125, y - 0.01), scale=0.55,
-                color=color.yellow, z=0.1,
-            )
-            self.sliders[gesture] = slider
-            self.value_text[gesture] = value_text
-            slider.on_value_changed = lambda name=gesture: self._changed(
-                name, self.sliders[name].value
-            )
-        Button(
-            "RESET DEFAULTS", parent=camera.ui, scale=(0.16, 0.04),
-            position=(0.53, -0.37), color=color.color(0, 0, 0.35),
-            text_color=color.white, z=0.1, on_click=self.reset,
-        )
-
-    def _changed(self, gesture: str, value: float) -> None:
-        self.values[gesture] = float(value)
-        self.value_text[gesture].text = f"{float(value):.2f}x"
-        save_gesture_speeds(self.values)
-        if self.on_change:
-            self.on_change(self.values)
-
-    def reset(self) -> None:
-        self.values = reset_gesture_speeds()
-        for gesture, slider in self.sliders.items():
-            slider.value = self.values[gesture]
-            self.value_text[gesture].text = f"{self.values[gesture]:.2f}x"
-        if self.on_change:
-            self.on_change(self.values)
+        safe_set_text(self.fps_text, f"FPS: {fps}")
+        safe_set_text(self.cpu_text, f"CPU: {cpu:.0f}%")
+        safe_set_text(self.ram_text, f"RAM: {ram:.0f}%")
 
 
 # ---------------------------------------------------------------------------
@@ -288,9 +283,9 @@ class InitOverlay:
             motion_reset_fn()
         self.update_bar(0)
         self.set_visible(True)
-        self._status_text.text = "Show your hand(s) to begin"
+        safe_set_text(self._status_text, "Show your hand(s) to begin")
         self._status_text.color = color.yellow
-        self._sub_text.text = "Hold still while scanning..."
+        safe_set_text(self._sub_text, "Hold still while scanning...")
 
     def process(self, seen_this_frame: dict) -> bool:
         """Runs one frame of the registration state machine.
@@ -320,14 +315,14 @@ class InitOverlay:
             self.update_bar(0)
             if self.state != "waiting":
                 self.state = "waiting"
-                self._status_text.text = "Show your hand(s) to begin"
+                safe_set_text(self._status_text, "Show your hand(s) to begin")
                 self._status_text.color = color.yellow
-                self._sub_text.text = "Hold still while scanning..."
+                safe_set_text(self._sub_text, "Hold still while scanning...")
         else:
             self.state = "scanning"
             self.frames += 1
             self.update_bar(self.frames / self.HOLD_FRAMES)
-            self._status_text.text = (
+            safe_set_text(self._status_text,
                 "Scanning..." if self.frames % 10 < 5 else "Hold steady..."
             )
             self._status_text.color = color.orange

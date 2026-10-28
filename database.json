@@ -1,6 +1,6 @@
 {
   "query": "car",
-  "timestamp": 1790331219.3588428,
+  "timestamp": 1792958150.2175949,
   "results": [
     {
       "name": "7365261af0b44c26b66d8272e5158428.glb",
@@ -90,7 +90,8 @@
       "name": "Car",
       "uid": "acccd15d4e454399a39dbe40f4f6df71",
       "viewer": "https://sketchfab.com/3d-models/acccd15d4e454399a39dbe40f4f6df71",
-      "source": "web"
+      "source": "local",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/Car.glb"
     },
     {
       "name": "Old Rusty Car",
