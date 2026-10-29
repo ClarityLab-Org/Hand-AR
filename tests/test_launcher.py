@@ -20,3 +20,25 @@ def test_point_cloud_launch_does_not_add_default_model(monkeypatch, tmp_path):
         "/data/campus.laz",
     ]
     assert launched["cwd"] == str(tmp_path)
+
+
+def test_viewer_launch_does_not_close_launcher(monkeypatch, tmp_path):
+    launched = {}
+    interaction_file = tmp_path / "trial2.py"
+    interaction_file.touch()
+    monkeypatch.setattr(launcher, "PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        launcher.subprocess,
+        "Popen",
+        lambda command, cwd: launched.update(command=command, cwd=cwd),
+    )
+
+    launcher.launch_ursina("/data/model.glb", "inspect")
+
+    assert launched["command"] == [
+        sys.executable,
+        str(interaction_file),
+        "/data/model.glb",
+        "inspect",
+    ]
+    assert launched["cwd"] == str(tmp_path)

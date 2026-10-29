@@ -58,70 +58,56 @@ def test_overview_lod_npz_exists_and_valid():
         assert data["vertices"].shape[1] == 3
 
 
-def test_view_cone_culling_math():
-    """Verifies that chunks in front of camera are prioritized over chunks behind camera."""
-    import math
+def test_camera_frustum_padding_balances_preload_and_retention():
+    """Preloads just outside the view and retains already loaded edge chunks longer."""
+    from handarm.engine.explore_core import _sphere_intersects_camera_frustum
 
-    px, pz = 0.0, 0.0
-    # Camera facing +Z
-    fx, fz = 0.0, 1.0
+    args = (
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        90.0,
+        60.0,
+    )
 
-    # Chunk A: in front of camera at (0, 50)
-    dx_a, dz_a = 0.0, 50.0
-    dist_a = math.hypot(dx_a, dz_a)
-    dot_a = (dx_a * fx + dz_a * fz) / dist_a
-    assert dot_a == 1.0, "Chunk directly in front must have dot product 1.0"
+    def intersects(center, padding):
+        return _sphere_intersects_camera_frustum(
+            center, 0.0, *args, padding_degrees=padding
+        )
 
-    # Chunk B: behind camera at (0, -50)
-    dx_b, dz_b = 0.0, -50.0
-    dist_b = math.hypot(dx_b, dz_b)
-    dot_b = (dx_b * fx + dz_b * fz) / dist_b
-    assert dot_b == -1.0, "Chunk directly behind must have dot product -1.0"
+    # 50 degrees off-axis: outside the actual 45-degree half-FOV, but within
+    # the 8-degree preload margin.
+    assert not intersects((59.6, 0.0, 50.0), padding=0.0)
+    assert intersects((59.6, 0.0, 50.0), padding=8.0)
 
-    # Priority score: lower score = loaded first
-    score_a = dist_a - 35.0 * max(0.0, dot_a)
-    score_b = dist_b - 35.0 * max(0.0, dot_b)
-    assert score_a < score_b, "Front chunk must have higher loading priority (lower score) than behind chunk"
+    # 60 degrees off-axis: retained with the wider margin, but not newly loaded.
+    assert not intersects((86.6, 0.0, 50.0), padding=8.0)
+    assert intersects((86.6, 0.0, 50.0), padding=20.0)
+
+    assert not intersects((0.0, 0.0, -50.0), padding=20.0)
 
 
-def test_load_queue_sorting_and_filtering():
-    """Verifies that candidate chunks are correctly filtered and prioritized."""
-    import math
+def test_camera_frustum_respects_vertical_fov_and_chunk_bounds():
+    """Rejects vertically off-screen centers while preserving intersecting chunks."""
+    from handarm.engine.explore_core import _sphere_intersects_camera_frustum
 
-    manifest_chunks = [
-        {"file": "chunk_front.npz", "center": [0.0, 0.0, 50.0]},
-        {"file": "chunk_back.npz", "center": [0.0, 0.0, -50.0]},
-        {"file": "chunk_close.npz", "center": [5.0, 0.0, 5.0]},
-        {"file": "chunk_far.npz", "center": [0.0, 0.0, 200.0]},
-    ]
+    camera = (
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        90.0,
+        60.0,
+    )
 
-    px, pz = 0.0, 0.0
-    fx, fz = 0.0, 1.0  # Camera facing +Z
+    def intersects(center, radius=0.0):
+        return _sphere_intersects_camera_frustum(center, radius, *camera)
 
-    load_queue = []
-    for c in manifest_chunks:
-        cx, cy, cz = c["center"]
-        dx = cx - px
-        dz = cz - pz
-        dist = math.hypot(dx, dz)
-        if dist <= 30.0:
-            in_view = True
-            dot = 1.0
-        elif dist <= 105.0:
-            dot = (dx * fx + dz * fz) / dist
-            in_view = (dot >= 0.05)
-        else:
-            in_view = False
-            dot = -1.0
-        if in_view:
-            priority = dist - 35.0 * max(0.0, dot)
-            load_queue.append((priority, c["file"]))
-
-    load_queue.sort(key=lambda x: x[0])
-    assert load_queue[0][1] == "chunk_close.npz"
-    assert load_queue[1][1] == "chunk_front.npz"
-    assert "chunk_back.npz" not in [f for _, f in load_queue]
-    assert "chunk_far.npz" not in [f for _, f in load_queue]
+    assert intersects((0.0, 0.0, 50.0))
+    assert not intersects((0.0, 40.0, 50.0))
+    assert not intersects((0.0, 0.0, -50.0))
+    assert intersects((60.0, 0.0, 50.0), radius=10.0)
 
 
 def test_lod_subsampling_and_distance_levels():
@@ -186,7 +172,6 @@ def test_fixed_point_rotation_logic():
     player.rotation_x -= pitch_speed * dt
     assert player.rotation_x < 0.0
     assert player.position == initial_pos, "Pitch rotation must NOT translate player position"
-
 
 
 

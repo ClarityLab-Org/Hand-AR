@@ -35,6 +35,38 @@ def _lod_subsample(arr: np.ndarray, lod: int) -> np.ndarray:
     return arr[::step] if step > 1 else arr
 
 
+def _sphere_intersects_camera_frustum(
+    center: Tuple[float, float, float],
+    radius: float,
+    camera_position: Tuple[float, float, float],
+    camera_forward: Tuple[float, float, float],
+    camera_right: Tuple[float, float, float],
+    camera_up: Tuple[float, float, float],
+    horizontal_fov: float,
+    vertical_fov: float,
+    padding_degrees: float = 0.0,
+) -> bool:
+    """Checks whether a chunk's bounding sphere intersects an expanded camera frustum."""
+    relative = tuple(center[i] - camera_position[i] for i in range(3))
+    depth = sum(relative[i] * camera_forward[i] for i in range(3))
+    if depth + radius < 0:
+        return False
+
+    horizontal = sum(relative[i] * camera_right[i] for i in range(3))
+    vertical = sum(relative[i] * camera_up[i] for i in range(3))
+    half_horizontal = math.radians(min(179.0, horizontal_fov + 2 * padding_degrees) / 2)
+    half_vertical = math.radians(min(179.0, vertical_fov + 2 * padding_degrees) / 2)
+
+    return (
+        depth * math.sin(half_horizontal)
+        - abs(horizontal) * math.cos(half_horizontal)
+        >= -radius
+        and depth * math.sin(half_vertical)
+        - abs(vertical) * math.cos(half_vertical)
+        >= -radius
+    )
+
+
 def _create_architectural_palette(y_elev: np.ndarray, raw_r: np.ndarray, raw_g: np.ndarray, raw_b: np.ndarray) -> np.ndarray:
     """Creates authentic Jodhpur Sandstone/Terracotta palette mapping elevation and foliage."""
     total = len(y_elev)
@@ -236,8 +268,10 @@ class ExploreEnvironment:
     CLOSE_RADIUS: float = 30.0     # Always-load zone (360°)
     UNLOAD_RADIUS: float = 135.0   # Eviction radius
 
-    # View frustum
-    VIEW_FOV_COS: float = 0.05     # ~174° horizontal FOV
+    # Load slightly ahead of the visible edge and retain loaded chunks longer to
+    # reduce popping without streaming the entire wide horizontal cone.
+    PRELOAD_FOV_PADDING: float = 8.0
+    RETENTION_FOV_PADDING: float = 20.0
 
     # Frame budget — keeps FPS rock-stable
     MAX_LOADS_PER_TICK: int = 1     # New chunk instantiations per tick
@@ -566,9 +600,15 @@ class ExploreEnvironment:
         if not self.is_chunked:
             return
 
-        # Player horizontal viewing heading from forward vector
-        fx = float(self.player.forward.x)
-        fz = float(self.player.forward.z)
+        camera_position = tuple(float(value) for value in camera.world_position)
+        camera_forward = tuple(float(value) for value in camera.forward)
+        camera_right = tuple(float(value) for value in camera.right)
+        camera_up = tuple(float(value) for value in camera.up)
+        horizontal_fov, vertical_fov = camera.lens.get_fov()
+
+        # Keep the existing horizontal-direction load priority.
+        fx = camera_forward[0]
+        fz = camera_forward[2]
         f_len = (fx * fx + fz * fz) ** 0.5
         if f_len > 1e-4:
             fx /= f_len
@@ -577,6 +617,8 @@ class ExploreEnvironment:
             fx, fz = 0.0, 1.0
 
         needed_files: Set[str] = set()
+        loadable_files: Set[str] = set()
+        lod_update_files: Set[str] = set()
         queued_load_files = {fname for _, fname, _ in self.load_queue}
         queued_upgrade_files = {fname for _, fname, _ in self.upgrade_queue}
 
@@ -586,22 +628,63 @@ class ExploreEnvironment:
             dz = cz - pz
             dist = (dx * dx + dz * dz) ** 0.5
 
-            # Dynamic View-Frustum / Proximity Test:
-            # 1. Immediate close zone (<= 30m): always load ground around player
-            # 2. View cone (30m to 105m): only chunks in front of camera (horizontal FOV)
+            filename = chunk_meta["file"]
             if dist <= self.CLOSE_RADIUS:
-                in_view = True
+                can_load = True
+                should_retain = True
                 dot = 1.0
-            elif dist <= self.LOAD_RADIUS:
-                dot = (dx * fx + dz * fz) / max(dist, 1e-3)
-                in_view = (dot >= self.VIEW_FOV_COS)
             else:
-                in_view = False
-                dot = -1.0
+                dot = (dx * fx + dz * fz) / max(dist, 1e-3)
+                min_bounds = chunk_meta.get("min_bounds")
+                max_bounds = chunk_meta.get("max_bounds")
+                frustum_center = (float(cx), float(cy), float(cz))
+                radius = 0.0
+                if min_bounds is not None and max_bounds is not None:
+                    frustum_center = tuple(
+                        (float(min_bounds[i]) + float(max_bounds[i])) / 2
+                        for i in range(3)
+                    )
+                    radius = math.sqrt(sum(
+                        ((float(max_bounds[i]) - float(min_bounds[i])) / 2) ** 2
+                        for i in range(3)
+                    ))
+                can_load = (
+                    dist <= self.LOAD_RADIUS
+                    and _sphere_intersects_camera_frustum(
+                        frustum_center,
+                        radius,
+                        camera_position,
+                        camera_forward,
+                        camera_right,
+                        camera_up,
+                        float(horizontal_fov),
+                        float(vertical_fov),
+                        self.PRELOAD_FOV_PADDING,
+                    )
+                )
+                should_retain = (
+                    filename in self.loaded_chunks
+                    and dist <= self.UNLOAD_RADIUS
+                    and _sphere_intersects_camera_frustum(
+                        frustum_center,
+                        radius,
+                        camera_position,
+                        camera_forward,
+                        camera_right,
+                        camera_up,
+                        float(horizontal_fov),
+                        float(vertical_fov),
+                        self.RETENTION_FOV_PADDING,
+                    )
+                )
 
-            if in_view:
-                filename = chunk_meta["file"]
+            if can_load or should_retain:
                 needed_files.add(filename)
+            if can_load:
+                loadable_files.add(filename)
+                lod_update_files.add(filename)
+
+            if can_load:
                 desired_lod = self._get_desired_lod(dist)
 
                 if filename in self.loaded_chunks:
@@ -629,22 +712,18 @@ class ExploreEnvironment:
 
         # Filter out chunks that are no longer in view or already loaded
         self.load_queue = [(p, f, lod) for p, f, lod in self.load_queue
-                           if f in needed_files and f not in self.loaded_chunks]
+                           if f in loadable_files and f not in self.loaded_chunks]
         self.upgrade_queue = [(p, f, lod) for p, f, lod in self.upgrade_queue
-                              if f in needed_files and f in self.loaded_chunks]
+                              if f in lod_update_files and f in self.loaded_chunks]
 
-        # Identify chunks to evict (outside UNLOAD_RADIUS or behind camera outside close zone)
+        # Cancel a pending eviction if the chunk has re-entered the retention zone.
+        self.evict_queue = [filename for filename in self.evict_queue
+                            if filename not in needed_files]
+
+        # A loaded chunk stays through the wider retention frustum, then is evicted.
         for filename, chunk in list(self.loaded_chunks.items()):
             if filename not in needed_files and filename not in self.evict_queue:
-                meta = self.chunk_metadata.get(filename)
-                if meta:
-                    cx, _, cz = meta["center"]
-                    dx = cx - px
-                    dz = cz - pz
-                    dist = (dx * dx + dz * dz) ** 0.5
-                    dot = (dx * fx + dz * fz) / max(dist, 1e-3)
-                    if dist > self.UNLOAD_RADIUS or (dist > self.CLOSE_RADIUS + 10.0 and dot < -0.2):
-                        self.evict_queue.append(filename)
+                self.evict_queue.append(filename)
 
     def _get_chunk_data(self, filename: str) -> Optional[Dict]:
         """Retrieves chunk data from in-memory cache, disk cache, or loads from disk."""
@@ -803,6 +882,8 @@ class ExploreEnvironment:
                 "gz": gz,
                 "file": filename,
                 "center": center,
+                "min_bounds": np.min(chunk_verts, axis=0).tolist(),
+                "max_bounds": np.max(chunk_verts, axis=0).tolist(),
                 "point_count": len(indices),
             }
             self.chunk_manifest.append(meta)
