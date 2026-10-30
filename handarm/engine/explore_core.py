@@ -35,36 +35,73 @@ def _lod_subsample(arr: np.ndarray, lod: int) -> np.ndarray:
     return arr[::step] if step > 1 else arr
 
 
-def _sphere_intersects_camera_frustum(
-    center: Tuple[float, float, float],
-    radius: float,
-    camera_position: Tuple[float, float, float],
-    camera_forward: Tuple[float, float, float],
-    camera_right: Tuple[float, float, float],
-    camera_up: Tuple[float, float, float],
+def _trapezoid_intersects_chunk_bounds(
+    min_x: float,
+    max_x: float,
+    min_z: float,
+    max_z: float,
+    camera_x: float,
+    camera_z: float,
+    forward_x: float,
+    forward_z: float,
     horizontal_fov: float,
-    vertical_fov: float,
+    max_depth: float,
+    near_depth: float = 0.0,
     padding_degrees: float = 0.0,
 ) -> bool:
-    """Checks whether a chunk's bounding sphere intersects an expanded camera frustum."""
-    relative = tuple(center[i] - camera_position[i] for i in range(3))
-    depth = sum(relative[i] * camera_forward[i] for i in range(3))
-    if depth + radius < 0:
-        return False
+    """Checks whether an XZ chunk rectangle overlaps the camera's FOV trapezoid."""
+    forward_length = math.hypot(forward_x, forward_z)
+    if forward_length <= 1e-6:
+        forward_x, forward_z = 0.0, 1.0
+    else:
+        forward_x /= forward_length
+        forward_z /= forward_length
 
-    horizontal = sum(relative[i] * camera_right[i] for i in range(3))
-    vertical = sum(relative[i] * camera_up[i] for i in range(3))
-    half_horizontal = math.radians(min(179.0, horizontal_fov + 2 * padding_degrees) / 2)
-    half_vertical = math.radians(min(179.0, vertical_fov + 2 * padding_degrees) / 2)
-
-    return (
-        depth * math.sin(half_horizontal)
-        - abs(horizontal) * math.cos(half_horizontal)
-        >= -radius
-        and depth * math.sin(half_vertical)
-        - abs(vertical) * math.cos(half_vertical)
-        >= -radius
+    half_angle = math.radians(
+        min(179.0, horizontal_fov + 2 * padding_degrees) / 2
     )
+    half_tangent = math.tan(half_angle)
+    right_x, right_z = -forward_z, forward_x
+
+    trapezoid = []
+    for depth, side in (
+        (near_depth, -1.0),
+        (near_depth, 1.0),
+        (max_depth, 1.0),
+        (max_depth, -1.0),
+    ):
+        half_width = depth * half_tangent
+        trapezoid.append((
+            camera_x + forward_x * depth + right_x * half_width * side,
+            camera_z + forward_z * depth + right_z * half_width * side,
+        ))
+
+    rectangle = (
+        (min_x, min_z),
+        (max_x, min_z),
+        (max_x, max_z),
+        (min_x, max_z),
+    )
+    axes = [(1.0, 0.0), (0.0, 1.0)]
+    for index, point in enumerate(trapezoid):
+        next_point = trapezoid[(index + 1) % len(trapezoid)]
+        edge_x = next_point[0] - point[0]
+        edge_z = next_point[1] - point[1]
+        axes.append((-edge_z, edge_x))
+
+    for axis_x, axis_z in axes:
+        trapezoid_projection = [
+            point[0] * axis_x + point[1] * axis_z for point in trapezoid
+        ]
+        rectangle_projection = [
+            point[0] * axis_x + point[1] * axis_z for point in rectangle
+        ]
+        if (
+            max(trapezoid_projection) < min(rectangle_projection)
+            or max(rectangle_projection) < min(trapezoid_projection)
+        ):
+            return False
+    return True
 
 
 def _create_architectural_palette(y_elev: np.ndarray, raw_r: np.ndarray, raw_g: np.ndarray, raw_b: np.ndarray) -> np.ndarray:
@@ -268,10 +305,12 @@ class ExploreEnvironment:
     CLOSE_RADIUS: float = 30.0     # Always-load zone (360°)
     UNLOAD_RADIUS: float = 135.0   # Eviction radius
 
-    # Load slightly ahead of the visible edge and retain loaded chunks longer to
-    # reduce popping without streaming the entire wide horizontal cone.
+    # FOV trapezoid starts inside the always-loaded zone to avoid a narrow gap.
+    FOV_NEAR_DEPTH: float = 15.0
     PRELOAD_FOV_PADDING: float = 8.0
     RETENTION_FOV_PADDING: float = 20.0
+    # Include the 28-degree aerial spawn view so its whole loaded window stays dense.
+    BIRDSEYE_FORWARD_Y_THRESHOLD: float = -0.25
 
     # Frame budget — keeps FPS rock-stable
     MAX_LOADS_PER_TICK: int = 1     # New chunk instantiations per tick
@@ -570,8 +609,10 @@ class ExploreEnvironment:
         self.single_entity.set_render_mode_thickness(self.current_thickness)
         self.single_entity.setRenderModeThickness(self.current_thickness, 1)
 
-    def _get_desired_lod(self, distance: float) -> int:
+    def _get_desired_lod(self, distance: float, birdseye: bool = False) -> int:
         """Returns the LOD level for a given distance from the player."""
+        if birdseye:
+            return LOD_FULL
         if distance <= self.LOD_FULL_RADIUS:
             return LOD_FULL
         elif distance <= self.LOD_MED_RADIUS:
@@ -595,18 +636,20 @@ class ExploreEnvironment:
         self.executor.submit(_worker)
 
     def _update_chunk_streaming(self, px: float, pz: float) -> None:
-        """Dynamically identifies chunks in player view frustum, assigns LOD levels,
+        """Dynamically identifies chunks in the camera's ground-plane FOV trapezoid,
+        assigns LOD levels,
         and queues them for smooth budgeted loading/upgrading."""
         if not self.is_chunked:
             return
 
         camera_position = tuple(float(value) for value in camera.world_position)
         camera_forward = tuple(float(value) for value in camera.forward)
-        camera_right = tuple(float(value) for value in camera.right)
         camera_up = tuple(float(value) for value in camera.up)
-        horizontal_fov, vertical_fov = camera.lens.get_fov()
+        horizontal_fov = float(camera.lens.get_fov()[0])
+        birdseye = camera_forward[1] <= self.BIRDSEYE_FORWARD_Y_THRESHOLD
 
-        # Keep the existing horizontal-direction load priority.
+        # A near-vertical view has almost no horizontal forward component; use
+        # the camera's screen-up axis to preserve its ground-plane orientation.
         fx = camera_forward[0]
         fz = camera_forward[2]
         f_len = (fx * fx + fz * fz) ** 0.5
@@ -614,7 +657,14 @@ class ExploreEnvironment:
             fx /= f_len
             fz /= f_len
         else:
-            fx, fz = 0.0, 1.0
+            fx = camera_up[0]
+            fz = camera_up[2]
+            f_len = (fx * fx + fz * fz) ** 0.5
+            if f_len > 1e-4:
+                fx /= f_len
+                fz /= f_len
+            else:
+                fx, fz = 0.0, 1.0
 
         needed_files: Set[str] = set()
         loadable_files: Set[str] = set()
@@ -637,43 +687,43 @@ class ExploreEnvironment:
                 dot = (dx * fx + dz * fz) / max(dist, 1e-3)
                 min_bounds = chunk_meta.get("min_bounds")
                 max_bounds = chunk_meta.get("max_bounds")
-                frustum_center = (float(cx), float(cy), float(cz))
-                radius = 0.0
                 if min_bounds is not None and max_bounds is not None:
-                    frustum_center = tuple(
-                        (float(min_bounds[i]) + float(max_bounds[i])) / 2
-                        for i in range(3)
-                    )
-                    radius = math.sqrt(sum(
-                        ((float(max_bounds[i]) - float(min_bounds[i])) / 2) ** 2
-                        for i in range(3)
-                    ))
+                    min_x, max_x = float(min_bounds[0]), float(max_bounds[0])
+                    min_z, max_z = float(min_bounds[2]), float(max_bounds[2])
+                else:
+                    min_x = max_x = float(cx)
+                    min_z = max_z = float(cz)
                 can_load = (
-                    dist <= self.LOAD_RADIUS
-                    and _sphere_intersects_camera_frustum(
-                        frustum_center,
-                        radius,
-                        camera_position,
-                        camera_forward,
-                        camera_right,
-                        camera_up,
+                    _trapezoid_intersects_chunk_bounds(
+                        min_x,
+                        max_x,
+                        min_z,
+                        max_z,
+                        float(camera_position[0]),
+                        float(camera_position[2]),
+                        fx,
+                        fz,
                         float(horizontal_fov),
-                        float(vertical_fov),
+                        self.LOAD_RADIUS,
+                        self.FOV_NEAR_DEPTH,
                         self.PRELOAD_FOV_PADDING,
                     )
                 )
                 should_retain = (
                     filename in self.loaded_chunks
                     and dist <= self.UNLOAD_RADIUS
-                    and _sphere_intersects_camera_frustum(
-                        frustum_center,
-                        radius,
-                        camera_position,
-                        camera_forward,
-                        camera_right,
-                        camera_up,
+                    and _trapezoid_intersects_chunk_bounds(
+                        min_x,
+                        max_x,
+                        min_z,
+                        max_z,
+                        float(camera_position[0]),
+                        float(camera_position[2]),
+                        fx,
+                        fz,
                         float(horizontal_fov),
-                        float(vertical_fov),
+                        self.UNLOAD_RADIUS,
+                        self.FOV_NEAR_DEPTH,
                         self.RETENTION_FOV_PADDING,
                     )
                 )
@@ -685,7 +735,7 @@ class ExploreEnvironment:
                 lod_update_files.add(filename)
 
             if can_load:
-                desired_lod = self._get_desired_lod(dist)
+                desired_lod = self._get_desired_lod(dist, birdseye=birdseye)
 
                 if filename in self.loaded_chunks:
                     # Check if LOD upgrade/downgrade is needed

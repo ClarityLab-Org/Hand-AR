@@ -58,60 +58,44 @@ def test_overview_lod_npz_exists_and_valid():
         assert data["vertices"].shape[1] == 3
 
 
-def test_camera_frustum_padding_balances_preload_and_retention():
-    """Preloads just outside the view and retains already loaded edge chunks longer."""
-    from handarm.engine.explore_core import _sphere_intersects_camera_frustum
+def test_camera_trapezoid_padding_balances_preload_and_retention():
+    """Preloads just outside the FOV and retains edge chunks with wider padding."""
+    from handarm.engine.explore_core import _trapezoid_intersects_chunk_bounds
 
-    args = (
-        (0.0, 0.0, 0.0),
-        (0.0, 0.0, 1.0),
-        (1.0, 0.0, 0.0),
-        (0.0, 1.0, 0.0),
-        90.0,
-        60.0,
-    )
-
-    def intersects(center, padding):
-        return _sphere_intersects_camera_frustum(
-            center, 0.0, *args, padding_degrees=padding
+    def intersects(x, z, padding):
+        return _trapezoid_intersects_chunk_bounds(
+            x, x, z, z, 0.0, 0.0, 0.0, 1.0, 90.0, 105.0,
+            near_depth=15.0, padding_degrees=padding,
         )
 
-    # 50 degrees off-axis: outside the actual 45-degree half-FOV, but within
-    # the 8-degree preload margin.
-    assert not intersects((59.6, 0.0, 50.0), padding=0.0)
-    assert intersects((59.6, 0.0, 50.0), padding=8.0)
+    # 50 degrees off-axis: outside the 45-degree half-FOV, inside 8-degree padding.
+    assert not intersects(59.6, 50.0, padding=0.0)
+    assert intersects(59.6, 50.0, padding=8.0)
 
-    # 60 degrees off-axis: retained with the wider margin, but not newly loaded.
-    assert not intersects((86.6, 0.0, 50.0), padding=8.0)
-    assert intersects((86.6, 0.0, 50.0), padding=20.0)
-
-    assert not intersects((0.0, 0.0, -50.0), padding=20.0)
+    # 60 degrees off-axis: outside preload padding, inside retention padding.
+    assert not intersects(86.6, 50.0, padding=8.0)
+    assert intersects(86.6, 50.0, padding=20.0)
+    assert not intersects(0.0, -50.0, padding=20.0)
 
 
-def test_camera_frustum_respects_vertical_fov_and_chunk_bounds():
-    """Rejects vertically off-screen centers while preserving intersecting chunks."""
-    from handarm.engine.explore_core import _sphere_intersects_camera_frustum
+def test_camera_trapezoid_uses_chunk_bounds_and_depth():
+    """Loads chunks overlapping the trapezoid and rejects chunks outside its depth."""
+    from handarm.engine.explore_core import _trapezoid_intersects_chunk_bounds
 
-    camera = (
-        (0.0, 0.0, 0.0),
-        (0.0, 0.0, 1.0),
-        (1.0, 0.0, 0.0),
-        (0.0, 1.0, 0.0),
-        90.0,
-        60.0,
-    )
+    def intersects(min_x, max_x, min_z, max_z):
+        return _trapezoid_intersects_chunk_bounds(
+            min_x, max_x, min_z, max_z, 0.0, 0.0, 0.0, 1.0, 90.0, 100.0,
+            near_depth=15.0,
+        )
 
-    def intersects(center, radius=0.0):
-        return _sphere_intersects_camera_frustum(center, radius, *camera)
-
-    assert intersects((0.0, 0.0, 50.0))
-    assert not intersects((0.0, 40.0, 50.0))
-    assert not intersects((0.0, 0.0, -50.0))
-    assert intersects((60.0, 0.0, 50.0), radius=10.0)
+    assert intersects(49.0, 55.0, 49.0, 51.0)
+    assert not intersects(60.0, 70.0, 49.0, 51.0)
+    assert not intersects(-1.0, 1.0, 101.0, 110.0)
 
 
 def test_lod_subsampling_and_distance_levels():
     """Verifies that point cloud level of detail/depth correctly scales with distance."""
+    import math
     import numpy as np
     from handarm.engine.explore_core import (
         LOD_FULL, LOD_MED, LOD_LOW,
@@ -134,6 +118,10 @@ def test_lod_subsampling_and_distance_levels():
     assert ExploreEnvironment.LOD_FULL_RADIUS == 35.0
     assert ExploreEnvironment.LOD_MED_RADIUS == 70.0
     assert ExploreEnvironment.LOAD_RADIUS == 105.0
+    environment = object.__new__(ExploreEnvironment)
+    spawn_view_forward_y = -math.sin(math.radians(28.0))
+    assert spawn_view_forward_y <= ExploreEnvironment.BIRDSEYE_FORWARD_Y_THRESHOLD
+    assert environment._get_desired_lod(85.0, birdseye=True) == LOD_FULL
 
     # Closer than 35m -> full detail
     dist_close = 20.0
@@ -172,6 +160,4 @@ def test_fixed_point_rotation_logic():
     player.rotation_x -= pitch_speed * dt
     assert player.rotation_x < 0.0
     assert player.position == initial_pos, "Pitch rotation must NOT translate player position"
-
-
 
