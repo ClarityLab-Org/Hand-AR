@@ -1,94 +1,82 @@
 {
   "query": "car",
-  "timestamp": 1784388817.4099884,
+  "timestamp": 1792958150.2175949,
   "results": [
     {
-      "name": "pointcloud_sample.csv",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/pointcloud_sample.csv",
-      "source": "local",
-      "mode": "explore"
-    },
-    {
-      "name": "flowers.csv",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/flowers.csv",
-      "source": "local",
-      "mode": "inspect"
-    },
-    {
-      "name": "claustroVeleBlanco.csv",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/claustroVeleBlanco.csv",
-      "source": "local",
-      "mode": "inspect"
-    },
-    {
-      "name": "Cartoon_Car.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/Cartoon_Car.glb",
-      "source": "local",
-      "mode": "inspect"
-    },
-    {
       "name": "7365261af0b44c26b66d8272e5158428.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/7365261af0b44c26b66d8272e5158428.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/7365261af0b44c26b66d8272e5158428.glb",
       "source": "local",
       "mode": "inspect"
     },
     {
       "name": "Bottled_car.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/Bottled_car.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/Bottled_car.glb",
       "source": "local",
       "mode": "inspect"
     },
     {
-      "name": "Old_Rusty_Car.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/Old_Rusty_Car.glb",
+      "name": "Cartoon_Car.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/Cartoon_Car.glb",
       "source": "local",
       "mode": "inspect"
     },
     {
       "name": "Gislinge_Viking_Boat.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/Gislinge_Viking_Boat.glb",
-      "source": "local",
-      "mode": "inspect"
-    },
-    {
-      "name": "platanus_sample.csv",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/platanus_sample.csv",
-      "source": "local",
-      "mode": "inspect"
-    },
-    {
-      "name": "ryomen_sukuna_from_jujutsu_kaisen.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/ryomen_sukuna_from_jujutsu_kaisen.glb",
-      "source": "local",
-      "mode": "inspect"
-    },
-    {
-      "name": "gorilla_tag_map.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/gorilla_tag_map.glb",
-      "source": "local",
-      "mode": "inspect"
-    },
-    {
-      "name": "vintage_racing_car.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/vintage_racing_car.glb",
-      "source": "local",
-      "mode": "inspect"
-    },
-    {
-      "name": "low_poly_mountains.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/low_poly_mountains.glb",
-      "source": "local",
-      "mode": "inspect"
-    },
-    {
-      "name": "ZOMBIE_PICKUP_TRUCK.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/ZOMBIE_PICKUP_TRUCK.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/Gislinge_Viking_Boat.glb",
       "source": "local",
       "mode": "inspect"
     },
     {
       "name": "ID_Card_Model.glb",
-      "path": "/home/dhaniya/Desktop/Hand-point-cloud/models/ID_Card_Model.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/ID_Card_Model.glb",
+      "source": "local",
+      "mode": "inspect"
+    },
+    {
+      "name": "Old_Rusty_Car.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/Old_Rusty_Car.glb",
+      "source": "local",
+      "mode": "inspect"
+    },
+    {
+      "name": "ZOMBIE_PICKUP_TRUCK.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/ZOMBIE_PICKUP_TRUCK.glb",
+      "source": "local",
+      "mode": "inspect"
+    },
+    {
+      "name": "gorilla_tag_map.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/gorilla_tag_map.glb",
+      "source": "local",
+      "mode": "inspect"
+    },
+    {
+      "name": "low_poly_mountains.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/low_poly_mountains.glb",
+      "source": "local",
+      "mode": "inspect"
+    },
+    {
+      "name": "ryomen_sukuna_from_jujutsu_kaisen.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/ryomen_sukuna_from_jujutsu_kaisen.glb",
+      "source": "local",
+      "mode": "inspect"
+    },
+    {
+      "name": "vintage_racing_car.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/vintage_racing_car.glb",
+      "source": "local",
+      "mode": "inspect"
+    },
+    {
+      "name": "iitj_campus.csv",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/iitj_campus.csv",
+      "source": "local",
+      "mode": "explore"
+    },
+    {
+      "name": "Futuristic_racing_ca_Molnia.glb",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/Futuristic_racing_ca_Molnia.glb",
       "source": "local",
       "mode": "inspect"
     },
@@ -102,7 +90,8 @@
       "name": "Car",
       "uid": "acccd15d4e454399a39dbe40f4f6df71",
       "viewer": "https://sketchfab.com/3d-models/acccd15d4e454399a39dbe40f4f6df71",
-      "source": "web"
+      "source": "local",
+      "path": "/home/youngoat/Coding/CLARITY_LAB/models/Car.glb"
     },
     {
       "name": "Old Rusty Car",
